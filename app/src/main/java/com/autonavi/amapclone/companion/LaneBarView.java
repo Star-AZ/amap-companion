@@ -37,7 +37,14 @@ public class LaneBarView extends View {
         int count = Math.max(1, Math.min(newLanes.length, 8));
         lanes = Arrays.copyOf(newLanes, count);
         if (newRecommend != null && newRecommend.length > 0) {
-            recommend = Arrays.copyOf(newRecommend, count);
+            recommend = new boolean[count];
+            if (newRecommend.length == 1) {
+                Arrays.fill(recommend, newRecommend[0]);
+            } else {
+                for (int i = 0; i < count; i++) {
+                    recommend[i] = i < newRecommend.length ? newRecommend[i] : newRecommend[newRecommend.length - 1];
+                }
+            }
             boolean any = false;
             for (boolean value : recommend) {
                 any |= value;
@@ -110,7 +117,7 @@ public class LaneBarView extends View {
         if (labels.length == 0) {
             return;
         }
-        if (icon.complex) {
+        if (icon.complex || labels.length > 1) {
             drawComplexLaneIcon(canvas, icon, left, width, laneRecommended);
             return;
         }

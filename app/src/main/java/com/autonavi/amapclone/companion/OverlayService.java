@@ -126,6 +126,8 @@ public class OverlayService extends Service {
         filter.addAction("com.autonavi.amapauto.AUTO_WIDGET_UPDATE_GPS_INFO");
         filter.addAction("com.autonavi.amapauto.AUTO_WIDGET_UPDATE_CAR_DIRECTION");
         filter.addAction("com.autonavi.amapauto.AUTO_WIDGET_UPDATE_CAMERA_INFO");
+        filter.addAction("com.autonavi.amapauto.AUTO_WIDGET_UPDATE_TRAFFIC_LIGHT_INFO");
+        filter.addAction("com.autonavi.amapauto.AUTO_WIDGET_UPDATE_CRUISE_TRAFFIC_LIGHT_INFO");
         try {
             registerReceiver(receiver, filter);
         } catch (Throwable t) {
@@ -327,8 +329,17 @@ public class OverlayService extends Service {
         updateProtocolDetails(extras);
 
         if (extras.containsKey("trafficLightStatus")
+                || extras.containsKey("TRAFFIC_LIGHT_STATUS")
+                || extras.containsKey("traffic_light_status")
                 || extras.containsKey("redLightCountDownSeconds")
+                || extras.containsKey("RED_LIGHT_COUNT_DOWN_SECONDS")
+                || extras.containsKey("red_light_count_down_seconds")
                 || extras.containsKey("greenLightLastSecond")
+                || extras.containsKey("GREEN_LIGHT_LAST_SECOND")
+                || extras.containsKey("green_light_last_second")
+                || extras.containsKey("leftRedLightCountDownSeconds")
+                || extras.containsKey("straightRedLightCountDownSeconds")
+                || extras.containsKey("rightRedLightCountDownSeconds")
                 || extras.containsKey("dir")) {
             updateTrafficLights(extras);
         }
@@ -472,10 +483,22 @@ public class OverlayService extends Service {
         if (lightRow == null) {
             return;
         }
-        int[] dirs = intArrayValue(extras, "dir", "DIR", "dirs", "DIRECTIONS");
-        int[] statuses = intArrayValue(extras, "trafficLightStatus", "TRAFFIC_LIGHT_STATUS", "trafficLightStatuses");
-        int[] reds = intArrayValue(extras, "redLightCountDownSeconds", "redLightCountDownSecond", "redSeconds");
-        int[] greens = intArrayValue(extras, "greenLightLastSecond", "greenSeconds");
+        if (updateDirectionalTrafficLights(extras)) {
+            renderTrafficLights();
+            return;
+        }
+        int[] dirs = intArrayValue(extras, "dir", "DIR", "dirs", "DIRECTIONS", "direction",
+                "directions", "trafficLightDir", "trafficLightDirs", "trafficLightDirection",
+                "trafficLightDirections", "TRAFFIC_LIGHT_DIR", "TRAFFIC_LIGHT_DIRECTION");
+        int[] statuses = intArrayValue(extras, "trafficLightStatus", "TRAFFIC_LIGHT_STATUS",
+                "trafficLightStatuses", "traffic_light_status", "trafficLightState",
+                "trafficLightStates", "TRAFFIC_LIGHT_STATE");
+        int[] reds = intArrayValue(extras, "redLightCountDownSeconds", "redLightCountDownSecond",
+                "redLightCountdownSeconds", "redSeconds", "redCountDown", "redCountdown",
+                "RED_LIGHT_COUNT_DOWN_SECONDS", "red_light_count_down_seconds");
+        int[] greens = intArrayValue(extras, "greenLightLastSecond", "greenLightCountDownSeconds",
+                "greenLightCountdownSeconds", "greenSeconds", "greenCountDown", "greenCountdown",
+                "GREEN_LIGHT_LAST_SECOND", "green_light_last_second");
         int count = Math.max(Math.max(lengthOf(dirs), lengthOf(statuses)), Math.max(lengthOf(reds), lengthOf(greens)));
         if (count == 0) {
             count = 1;
@@ -486,7 +509,7 @@ public class OverlayService extends Service {
         }
 
         for (int i = 0; i < count; i++) {
-            int dir = valueAt(dirs, i, intValue(extras, "dir", -1));
+            int dir = valueAt(dirs, i, intValue(extras, "dir", intValue(extras, "direction", -1)));
             int status = valueAt(statuses, i, intValue(extras, "trafficLightStatus", -1));
             int red = valueAt(reds, i, intValue(extras, "redLightCountDownSeconds", 0));
             int green = valueAt(greens, i, intValue(extras, "greenLightLastSecond", 0));
@@ -505,6 +528,42 @@ public class OverlayService extends Service {
             trafficLights.put(key, state);
         }
         renderTrafficLights();
+    }
+
+    private boolean updateDirectionalTrafficLights(Bundle extras) {
+        boolean handled = false;
+        handled |= putDirectionalLight(extras, 1, "leftRedLightCountDownSeconds",
+                "LEFT_RED_LIGHT_COUNT_DOWN_SECONDS", "leftRedSeconds");
+        handled |= putDirectionalLight(extras, 4, "straightRedLightCountDownSeconds",
+                "STRAIGHT_RED_LIGHT_COUNT_DOWN_SECONDS", "straightRedSeconds", "frontRedSeconds");
+        handled |= putDirectionalLight(extras, 2, "rightRedLightCountDownSeconds",
+                "RIGHT_RED_LIGHT_COUNT_DOWN_SECONDS", "rightRedSeconds");
+        handled |= putDirectionalLight(extras, 1, "leftGreenLightLastSecond",
+                "LEFT_GREEN_LIGHT_LAST_SECOND", "leftGreenSeconds");
+        handled |= putDirectionalLight(extras, 4, "straightGreenLightLastSecond",
+                "STRAIGHT_GREEN_LIGHT_LAST_SECOND", "straightGreenSeconds", "frontGreenSeconds");
+        handled |= putDirectionalLight(extras, 2, "rightGreenLightLastSecond",
+                "RIGHT_GREEN_LIGHT_LAST_SECOND", "rightGreenSeconds");
+        return handled;
+    }
+
+    private boolean putDirectionalLight(Bundle extras, int dir, String... keys) {
+        int seconds = intValue(extras, keys[0], 0);
+        for (int i = 1; i < keys.length && seconds <= 0; i++) {
+            seconds = intValue(extras, keys[i], 0);
+        }
+        if (seconds <= 0) {
+            return false;
+        }
+        LightState state = new LightState();
+        state.dir = dir;
+        state.status = keys[0].toLowerCase(java.util.Locale.US).contains("green") ? 4 : 1;
+        state.seconds = seconds;
+        state.color = colorForStatus(state.status, state.status == 1 ? seconds : 0,
+                state.status == 4 ? seconds : 0);
+        state.updatedAt = System.currentTimeMillis();
+        trafficLights.put(inCruiseMode ? dir : 999, state);
+        return true;
     }
 
     private void renderTrafficLights() {
@@ -1068,6 +1127,9 @@ public class OverlayService extends Service {
         }
         if (value instanceof boolean[]) {
             return (boolean[]) value;
+        }
+        if (value instanceof Boolean) {
+            return new boolean[]{(Boolean) value};
         }
         Class<?> cls = value.getClass();
         if (cls.isArray()) {

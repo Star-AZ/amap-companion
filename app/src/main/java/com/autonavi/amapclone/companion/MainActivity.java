@@ -119,9 +119,11 @@ public class MainActivity extends Activity {
 
     private void chooseTargetApp() {
         PackageManager pm = getPackageManager();
+        int flags = Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? PackageManager.MATCH_ALL : 0;
+        HashSet<String> launcherPackages = new HashSet<>();
         Intent main = new Intent(Intent.ACTION_MAIN);
         main.addCategory(Intent.CATEGORY_LAUNCHER);
-        List<ResolveInfo> resolved = pm.queryIntentActivities(main, 0);
+        List<ResolveInfo> resolved = pm.queryIntentActivities(main, flags);
         HashSet<String> seen = new HashSet<>();
         ArrayList<AppChoice> choices = new ArrayList<>();
         for (ResolveInfo info : resolved) {
@@ -129,6 +131,7 @@ public class MainActivity extends Activity {
                 continue;
             }
             String pkg = info.activityInfo.packageName;
+            launcherPackages.add(pkg);
             if (pkg.equals(getPackageName())) {
                 continue;
             }
@@ -137,12 +140,26 @@ public class MainActivity extends Activity {
             }
             ApplicationInfo appInfo = info.activityInfo.applicationInfo;
             String label = String.valueOf(appInfo.loadLabel(pm));
-            choices.add(new AppChoice(label, pkg));
+            choices.add(new AppChoice(label, pkg, isSystemApp(appInfo), true));
         }
-        Collections.sort(choices, Comparator.comparing(a -> a.label.toLowerCase(java.util.Locale.CHINA)));
+        for (ApplicationInfo appInfo : pm.getInstalledApplications(flags)) {
+            String pkg = appInfo.packageName;
+            if (pkg == null || pkg.equals(getPackageName()) || !seen.add(pkg)) {
+                continue;
+            }
+            String label = String.valueOf(appInfo.loadLabel(pm));
+            choices.add(new AppChoice(label, pkg, isSystemApp(appInfo), launcherPackages.contains(pkg)));
+        }
+        Collections.sort(choices, Comparator
+                .comparing((AppChoice a) -> a.system)
+                .thenComparing(a -> a.label.toLowerCase(java.util.Locale.CHINA))
+                .thenComparing(a -> a.packageName));
         String[] labels = new String[choices.size()];
         for (int i = 0; i < choices.size(); i++) {
-            labels[i] = choices.get(i).label + "\n" + choices.get(i).packageName;
+            AppChoice choice = choices.get(i);
+            String type = choice.system ? "\u7cfb\u7edf" : "\u7528\u6237";
+            String launch = choice.launchable ? "\u53ef\u6253\u5f00" : "\u65e0\u684c\u9762\u56fe\u6807";
+            labels[i] = choice.label + "  ·  " + type + " · " + launch + "\n" + choice.packageName;
         }
         new AlertDialog.Builder(this)
                 .setTitle("\u9009\u62e9\u76ee\u6807\u5e94\u7528")
@@ -152,6 +169,10 @@ public class MainActivity extends Activity {
                     startOverlayService();
                 })
                 .show();
+    }
+
+    private boolean isSystemApp(ApplicationInfo appInfo) {
+        return (appInfo.flags & (ApplicationInfo.FLAG_SYSTEM | ApplicationInfo.FLAG_UPDATED_SYSTEM_APP)) != 0;
     }
 
     private void startOverlayService() {
@@ -208,10 +229,14 @@ public class MainActivity extends Activity {
     private static final class AppChoice {
         final String label;
         final String packageName;
+        final boolean system;
+        final boolean launchable;
 
-        AppChoice(String label, String packageName) {
+        AppChoice(String label, String packageName, boolean system, boolean launchable) {
             this.label = label;
             this.packageName = packageName;
+            this.system = system;
+            this.launchable = launchable;
         }
     }
 }
