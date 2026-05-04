@@ -867,15 +867,15 @@ public class OverlayService extends Service {
 
     private int secondsForLight(int status, int red, int green) {
         if (isGreenLightStatus(status)) {
-            return green > 0 ? green : red;
+            return red > 0 ? red : green;
         }
         if (isRedLightStatus(status)) {
             return red > 0 ? red : green;
         }
         if (isYellowLightStatus(status)) {
-            return green > 0 ? green : red;
+            return red > 0 ? red : green;
         }
-        return green > 0 ? green : red;
+        return red > 0 ? red : green;
     }
 
     private boolean isRedLightStatus(int status) {
