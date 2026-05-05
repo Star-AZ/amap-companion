@@ -53,6 +53,7 @@ public class MainActivity extends Activity {
     static final String KEY_SHOW_ALERT = "show_alert";
     static final String KEY_SHOW_DETAIL = "show_detail";
     static final String KEY_TRANSPARENT_BACKGROUND = "transparent_background";
+    static final String KEY_BACKGROUND_OPACITY_PERCENT = "background_opacity_percent";
     static final String KEY_TEXT_MODE = "text_mode";
     static final String ACTION_MAIN_OVERLAY_CHANGED = "com.autonavi.companion.MAIN_OVERLAY_CHANGED";
     static final String ACTION_OVERLAY_SCALE_CHANGED = "com.autonavi.companion.OVERLAY_SCALE_CHANGED";
@@ -69,7 +70,10 @@ public class MainActivity extends Activity {
     static final String LICENSE_URL = "https://github.com/zuo-qirun/amap-companion/blob/master/LICENSE";
     static final String DEFAULT_UPDATE_URL = SERVER_UPDATE_URL;
     static final String TEXT_MODE_LIGHT = "light";
-    static final String TEXT_MODE_DARK = "dark";
+    static final String TEXT_MODE_AUTO = "auto";
+    static final int MIN_BACKGROUND_OPACITY_PERCENT = 15;
+    static final int MAX_BACKGROUND_OPACITY_PERCENT = 90;
+    static final int DEFAULT_BACKGROUND_OPACITY_PERCENT = 90;
     static final int MIN_OVERLAY_SCALE_PERCENT = 80;
     static final int MAX_OVERLAY_SCALE_PERCENT = 300;
     static final int DEFAULT_OVERLAY_SCALE_PERCENT = 200;
@@ -79,6 +83,7 @@ public class MainActivity extends Activity {
     private TextView updateText;
     private TextView overlayScaleText;
     private TextView clusterScaleText;
+    private TextView overlayBackgroundOpacityText;
     private FrameLayout overlayPreviewStage;
     private LinearLayout overlayPreviewPanel;
     private Button overlayTextModeButton;
@@ -95,6 +100,7 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         persistDefaultUpdateUrl();
+        migrateOverlayStylePrefs();
         setContentView(buildContent());
         startOverlayService();
         targetText.postDelayed(() -> {
@@ -106,6 +112,7 @@ public class MainActivity extends Activity {
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
         scroll.setBackgroundColor(0xFFF3F6FA);
+        boolean wideLayout = isWideLayout();
 
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
@@ -140,31 +147,76 @@ public class MainActivity extends Activity {
         hero.addView(updateText, updateLp);
         updateUpdateText("\u66f4\u65b0\u6e20\u9053\n" + displayUpdateUrl());
 
-        LinearLayout controls = card(Color.WHITE);
-        LinearLayout.LayoutParams controlsLp = new LinearLayout.LayoutParams(-1, -2);
-        controlsLp.setMargins(0, dp(14), 0, 0);
-        root.addView(controls, controlsLp);
+        LinearLayout contentArea = new LinearLayout(this);
+        contentArea.setOrientation(wideLayout ? LinearLayout.HORIZONTAL : LinearLayout.VERTICAL);
+        LinearLayout.LayoutParams contentLp = new LinearLayout.LayoutParams(-1, -2);
+        contentLp.setMargins(0, dp(14), 0, 0);
+        root.addView(contentArea, contentLp);
 
-        controls.addView(button("\u9009\u62e9\u76ee\u6807\u5e94\u7528", v -> chooseTargetApp(), 0xFF2563EB));
-        controls.addView(button("\u6388\u6743\u60ac\u6d6e\u7a97", v -> requestOverlayPermission(), 0xFF475569));
-        controls.addView(button("\u542f\u52a8\u60ac\u6d6e\u7a97", v -> enableMainOverlay(), 0xFF0F766E));
-        controls.addView(button("\u5173\u95ed\u60ac\u6d6e\u7a97", v -> stopOverlayService(), 0xFFB45309));
-        controls.addView(button(clusterMirrorButtonText(), v -> toggleClusterMirror((Button) v), 0xFF7C3AED));
-        controls.addView(button("\u6253\u5f00\u76ee\u6807\u5e94\u7528", v -> openTargetApp(), 0xFF111827));
-        controls.addView(button("\u9009\u62e9\u4e0b\u8f7d\u6e20\u9053", v -> chooseUpdateChannel(), 0xFF334155));
-        controls.addView(button("\u68c0\u67e5\u66f4\u65b0", v -> checkForUpdates(true), 0xFF059669));
-        addOverlayScaleControls(controls);
-        addClusterMirrorControls(controls);
-        addOverlayContentControls(controls);
-        addOpenSourceSection(root);
+        LinearLayout leftColumn = new LinearLayout(this);
+        leftColumn.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout.LayoutParams leftLp = new LinearLayout.LayoutParams(-1, -2);
+        if (wideLayout) {
+            leftLp = new LinearLayout.LayoutParams(0, -2, 1f);
+            leftLp.setMargins(0, 0, dp(7), 0);
+        }
+        contentArea.addView(leftColumn, leftLp);
+
+        LinearLayout rightColumn = new LinearLayout(this);
+        rightColumn.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout.LayoutParams rightLp = new LinearLayout.LayoutParams(-1, -2);
+        if (wideLayout) {
+            rightLp = new LinearLayout.LayoutParams(0, -2, 1f);
+            rightLp.setMargins(dp(7), 0, 0, 0);
+        } else {
+            rightLp.setMargins(0, dp(14), 0, 0);
+        }
+        contentArea.addView(rightColumn, rightLp);
+
+        LinearLayout actions = card(Color.WHITE);
+        leftColumn.addView(actions, new LinearLayout.LayoutParams(-1, -2));
+        addActionButtons(actions, wideLayout);
+
+        LinearLayout settings = card(Color.WHITE);
+        rightColumn.addView(settings, new LinearLayout.LayoutParams(-1, -2));
+        addOverlayScaleControls(settings);
+        addClusterMirrorControls(settings);
+        addOverlayContentControls(settings);
+        addOpenSourceSection(wideLayout ? leftColumn : rightColumn, wideLayout);
 
         return scroll;
     }
 
-    private void addOpenSourceSection(LinearLayout root) {
+    private void addActionButtons(LinearLayout parent, boolean wideLayout) {
+        if (wideLayout) {
+            addButtonPair(parent,
+                    button("\u9009\u62e9\u76ee\u6807\u5e94\u7528", v -> chooseTargetApp(), 0xFF2563EB),
+                    button("\u6388\u6743\u60ac\u6d6e\u7a97", v -> requestOverlayPermission(), 0xFF475569));
+            addButtonPair(parent,
+                    button("\u542f\u52a8\u60ac\u6d6e\u7a97", v -> enableMainOverlay(), 0xFF0F766E),
+                    button("\u5173\u95ed\u60ac\u6d6e\u7a97", v -> stopOverlayService(), 0xFFB45309));
+            addButtonPair(parent,
+                    button(clusterMirrorButtonText(), v -> toggleClusterMirror((Button) v), 0xFF7C3AED),
+                    button("\u6253\u5f00\u76ee\u6807\u5e94\u7528", v -> openTargetApp(), 0xFF111827));
+            addButtonPair(parent,
+                    button("\u9009\u62e9\u4e0b\u8f7d\u6e20\u9053", v -> chooseUpdateChannel(), 0xFF334155),
+                    button("\u68c0\u67e5\u66f4\u65b0", v -> checkForUpdates(true), 0xFF059669));
+            return;
+        }
+        parent.addView(button("\u9009\u62e9\u76ee\u6807\u5e94\u7528", v -> chooseTargetApp(), 0xFF2563EB));
+        parent.addView(button("\u6388\u6743\u60ac\u6d6e\u7a97", v -> requestOverlayPermission(), 0xFF475569));
+        parent.addView(button("\u542f\u52a8\u60ac\u6d6e\u7a97", v -> enableMainOverlay(), 0xFF0F766E));
+        parent.addView(button("\u5173\u95ed\u60ac\u6d6e\u7a97", v -> stopOverlayService(), 0xFFB45309));
+        parent.addView(button(clusterMirrorButtonText(), v -> toggleClusterMirror((Button) v), 0xFF7C3AED));
+        parent.addView(button("\u6253\u5f00\u76ee\u6807\u5e94\u7528", v -> openTargetApp(), 0xFF111827));
+        parent.addView(button("\u9009\u62e9\u4e0b\u8f7d\u6e20\u9053", v -> chooseUpdateChannel(), 0xFF334155));
+        parent.addView(button("\u68c0\u67e5\u66f4\u65b0", v -> checkForUpdates(true), 0xFF059669));
+    }
+
+    private void addOpenSourceSection(LinearLayout root, boolean compactTopMargin) {
         LinearLayout section = card(Color.WHITE);
         LinearLayout.LayoutParams sectionLp = new LinearLayout.LayoutParams(-1, -2);
-        sectionLp.setMargins(0, dp(14), 0, 0);
+        sectionLp.setMargins(0, compactTopMargin ? dp(10) : dp(14), 0, 0);
         root.addView(section, sectionLp);
 
         TextView title = new TextView(this);
@@ -193,8 +245,14 @@ public class MainActivity extends Activity {
         licenseLp.setMargins(0, dp(10), 0, 0);
         section.addView(license, licenseLp);
 
-        section.addView(button("\u6253\u5f00\u5f00\u6e90\u4ed3\u5e93", v -> openUrl(REPOSITORY_URL), 0xFF1D4ED8));
-        section.addView(button("\u67e5\u770b\u8bb8\u53ef\u8bc1", v -> openUrl(LICENSE_URL), 0xFF475569));
+        if (isWideLayout()) {
+            addButtonPair(section,
+                    button("\u6253\u5f00\u5f00\u6e90\u4ed3\u5e93", v -> openUrl(REPOSITORY_URL), 0xFF1D4ED8),
+                    button("\u67e5\u770b\u8bb8\u53ef\u8bc1", v -> openUrl(LICENSE_URL), 0xFF475569));
+        } else {
+            section.addView(button("\u6253\u5f00\u5f00\u6e90\u4ed3\u5e93", v -> openUrl(REPOSITORY_URL), 0xFF1D4ED8));
+            section.addView(button("\u67e5\u770b\u8bb8\u53ef\u8bc1", v -> openUrl(LICENSE_URL), 0xFF475569));
+        }
     }
 
     private void addOverlayScaleControls(LinearLayout parent) {
@@ -337,14 +395,29 @@ public class MainActivity extends Activity {
         gridLp.setMargins(0, dp(6), 0, 0);
         box.addView(grid, gridLp);
 
-        grid.addView(contentToggle("\u9876\u90e8\u72b6\u6001", KEY_SHOW_MODE));
-        grid.addView(contentToggle("\u8def\u7ebf\u6307\u5f15", KEY_SHOW_TURN));
-        grid.addView(contentToggle("\u7ea2\u7eff\u706f\u5012\u8ba1\u65f6", KEY_SHOW_LIGHT));
-        grid.addView(contentToggle("\u8f66\u9053\u4fe1\u606f", KEY_SHOW_LANE));
-        grid.addView(contentToggle("\u5269\u4f59\u91cc\u7a0b\u4e0e\u76ee\u7684\u5730", KEY_SHOW_ETA));
-        grid.addView(contentToggle("\u9650\u901f/\u7535\u5b50\u773c/\u7ea2\u7eff\u706f\u4e2a\u6570", KEY_SHOW_ALERT));
-        grid.addView(contentToggle("\u8be6\u7ec6\u72b6\u6001", KEY_SHOW_DETAIL));
-        grid.addView(styleToggle("\u60ac\u6d6e\u7a97\u4e3b\u80cc\u666f\u900f\u660e", KEY_TRANSPARENT_BACKGROUND));
+        if (isWideLayout()) {
+            addTogglePair(grid,
+                    contentToggle("\u9876\u90e8\u72b6\u6001", KEY_SHOW_MODE),
+                    contentToggle("\u8def\u7ebf\u6307\u5f15", KEY_SHOW_TURN));
+            addTogglePair(grid,
+                    contentToggle("\u7ea2\u7eff\u706f\u5012\u8ba1\u65f6", KEY_SHOW_LIGHT),
+                    contentToggle("\u8f66\u9053\u4fe1\u606f", KEY_SHOW_LANE));
+            addTogglePair(grid,
+                    contentToggle("\u5269\u4f59\u91cc\u7a0b\u4e0e\u76ee\u7684\u5730", KEY_SHOW_ETA),
+                    contentToggle("\u9650\u901f/\u7535\u5b50\u773c/\u7ea2\u7eff\u706f\u4e2a\u6570", KEY_SHOW_ALERT));
+            addTogglePair(grid,
+                    contentToggle("\u8be6\u7ec6\u72b6\u6001", KEY_SHOW_DETAIL),
+                    null);
+        } else {
+            grid.addView(contentToggle("\u9876\u90e8\u72b6\u6001", KEY_SHOW_MODE));
+            grid.addView(contentToggle("\u8def\u7ebf\u6307\u5f15", KEY_SHOW_TURN));
+            grid.addView(contentToggle("\u7ea2\u7eff\u706f\u5012\u8ba1\u65f6", KEY_SHOW_LIGHT));
+            grid.addView(contentToggle("\u8f66\u9053\u4fe1\u606f", KEY_SHOW_LANE));
+            grid.addView(contentToggle("\u5269\u4f59\u91cc\u7a0b\u4e0e\u76ee\u7684\u5730", KEY_SHOW_ETA));
+            grid.addView(contentToggle("\u9650\u901f/\u7535\u5b50\u773c/\u7ea2\u7eff\u706f\u4e2a\u6570", KEY_SHOW_ALERT));
+            grid.addView(contentToggle("\u8be6\u7ec6\u72b6\u6001", KEY_SHOW_DETAIL));
+        }
+        addBackgroundOpacityControls(box);
         overlayTextModeButton = button(textModeButtonText(), v -> chooseTextMode(), 0xFF475569);
         LinearLayout.LayoutParams buttonLp = new LinearLayout.LayoutParams(-1, dp(42));
         buttonLp.setMargins(0, dp(8), 0, 0);
@@ -356,6 +429,46 @@ public class MainActivity extends Activity {
         parent.addView(box, lp);
         updateOverlayPreviewContentVisibility();
         applyOverlayPreviewStyle();
+    }
+
+    private void addBackgroundOpacityControls(LinearLayout parent) {
+        overlayBackgroundOpacityText = new TextView(this);
+        overlayBackgroundOpacityText.setTextSize(13f);
+        overlayBackgroundOpacityText.setTextColor(0xFF334155);
+        LinearLayout.LayoutParams textLp = new LinearLayout.LayoutParams(-1, -2);
+        textLp.setMargins(0, dp(8), 0, 0);
+        parent.addView(overlayBackgroundOpacityText, textLp);
+
+        SeekBar seekBar = new SeekBar(this);
+        seekBar.setMax(MAX_BACKGROUND_OPACITY_PERCENT - MIN_BACKGROUND_OPACITY_PERCENT);
+        seekBar.setProgress(getBackgroundOpacityPercent(this) - MIN_BACKGROUND_OPACITY_PERCENT);
+        seekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar bar, int progress, boolean fromUser) {
+                int percent = MIN_BACKGROUND_OPACITY_PERCENT + progress;
+                updateBackgroundOpacityText(percent);
+                if (fromUser) {
+                    saveBackgroundOpacityPercent(percent);
+                    applyOverlayPreviewStyle();
+                    notifyOverlayStyleChanged();
+                }
+            }
+
+            @Override
+            public void onStartTrackingTouch(SeekBar bar) {
+            }
+
+            @Override
+            public void onStopTrackingTouch(SeekBar bar) {
+                int percent = MIN_BACKGROUND_OPACITY_PERCENT + bar.getProgress();
+                saveBackgroundOpacityPercent(percent);
+                updateBackgroundOpacityText(percent);
+                applyOverlayPreviewStyle();
+                notifyOverlayStyleChanged();
+            }
+        });
+        parent.addView(seekBar, new LinearLayout.LayoutParams(-1, -2));
+        updateBackgroundOpacityText(getBackgroundOpacityPercent(this));
     }
 
     private void addOverlayPreview(LinearLayout parent) {
@@ -595,6 +708,64 @@ public class MainActivity extends Activity {
         lp.setMargins(dp(5), dp(6), dp(5), 0);
         b.setLayoutParams(lp);
         return b;
+    }
+
+    private void addButtonPair(LinearLayout parent, Button left, Button right) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setWeightSum(2f);
+        LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(-1, -2);
+        rowLp.setMargins(0, dp(9), 0, 0);
+        row.setLayoutParams(rowLp);
+
+        row.addView(wideButton(left, 0, dp(5)));
+        if (right != null) {
+            row.addView(wideButton(right, dp(5), 0));
+        } else {
+            android.view.View spacer = new android.view.View(this);
+            LinearLayout.LayoutParams spacerLp = new LinearLayout.LayoutParams(0, 0, 1f);
+            spacerLp.setMargins(dp(5), 0, 0, 0);
+            row.addView(spacer, spacerLp);
+        }
+        parent.addView(row);
+    }
+
+    private Button wideButton(Button button, int leftMargin, int rightMargin) {
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, dp(46), 1f);
+        lp.setMargins(leftMargin, 0, rightMargin, 0);
+        button.setLayoutParams(lp);
+        return button;
+    }
+
+    private void addTogglePair(LinearLayout parent, CheckBox left, CheckBox right) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setWeightSum(2f);
+        LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(-1, -2);
+        rowLp.setMargins(0, dp(2), 0, 0);
+        row.setLayoutParams(rowLp);
+
+        row.addView(wideToggle(left, 0, dp(8)));
+        if (right != null) {
+            row.addView(wideToggle(right, dp(8), 0));
+        } else {
+            android.view.View spacer = new android.view.View(this);
+            LinearLayout.LayoutParams spacerLp = new LinearLayout.LayoutParams(0, 0, 1f);
+            spacerLp.setMargins(dp(8), 0, 0, 0);
+            row.addView(spacer, spacerLp);
+        }
+        parent.addView(row);
+    }
+
+    private CheckBox wideToggle(CheckBox checkBox, int leftMargin, int rightMargin) {
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, -2, 1f);
+        lp.setMargins(leftMargin, 0, rightMargin, 0);
+        checkBox.setLayoutParams(lp);
+        return checkBox;
+    }
+
+    private boolean isWideLayout() {
+        return getResources().getDisplayMetrics().widthPixels >= getResources().getDisplayMetrics().heightPixels;
     }
 
     private void chooseTargetApp() {
@@ -919,24 +1090,6 @@ public class MainActivity extends Activity {
         return checkBox;
     }
 
-    private CheckBox styleToggle(String text, String key) {
-        CheckBox checkBox = new CheckBox(this);
-        checkBox.setText(text);
-        checkBox.setChecked(isOverlayContentEnabled(this, key));
-        checkBox.setTextSize(14f);
-        checkBox.setTextColor(0xFF0F172A);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            checkBox.setButtonTintList(android.content.res.ColorStateList.valueOf(0xFF2563EB));
-        }
-        checkBox.setPadding(0, dp(2), 0, dp(2));
-        checkBox.setOnCheckedChangeListener((CompoundButton buttonView, boolean isChecked) -> {
-            saveOverlayContentEnabled(key, isChecked);
-            applyOverlayPreviewStyle();
-            notifyOverlayStyleChanged();
-        });
-        return checkBox;
-    }
-
     private void saveOverlayContentEnabled(String key, boolean enabled) {
         getSharedPreferences(PREFS, MODE_PRIVATE)
                 .edit()
@@ -960,6 +1113,7 @@ public class MainActivity extends Activity {
         if (overlayTextModeButton != null) {
             overlayTextModeButton.setText(textModeButtonText());
         }
+        updateBackgroundOpacityText(getBackgroundOpacityPercent(this));
     }
 
     private void applyOverlayPreviewPanelStyle() {
@@ -989,32 +1143,28 @@ public class MainActivity extends Activity {
     private GradientDrawable createPreviewPanelBackground() {
         GradientDrawable bg = new GradientDrawable();
         bg.setCornerRadius(dp(7));
-        if (isTransparentBackground(this)) {
-            bg.setColor(Color.TRANSPARENT);
-            bg.setStroke(0, Color.TRANSPARENT);
-        } else {
-            bg.setColor(0xEA111827);
-            bg.setStroke(dp(1), 0x22FFFFFF);
-        }
+        int opacity = getBackgroundOpacityPercent(this);
+        bg.setColor(withAlpha(0xFF111827, opacity));
+        bg.setStroke(dp(1), withAlpha(0xFFFFFFFF, Math.max(8, Math.round(opacity * 0.18f))));
         return bg;
     }
 
     private String textModeButtonText() {
-        return isDarkTextMode(this)
-                ? "\u6587\u5b57\u6a21\u5f0f\uff1a\u6df1\u8272\uff08\u9002\u5408\u6d45\u80cc\u666f\uff09"
-                : "\u6587\u5b57\u6a21\u5f0f\uff1a\u6d45\u8272\uff08\u9002\u5408\u6df1\u80cc\u666f\uff09";
+        return isAutoTextMode(this)
+                ? "\u6587\u5b57\u6a21\u5f0f\uff1a\u81ea\u52a8\uff08\u6839\u636e\u900f\u660e\u5ea6\u81ea\u52a8\u5207\u6362\uff09"
+                : "\u6587\u5b57\u6a21\u5f0f\uff1a\u6d45\u8272";
     }
 
     private void chooseTextMode() {
         String[] labels = {
-                "\u6d45\u8272\u6587\u5b57\uff08\u9002\u5408\u6df1\u8272\u5730\u56fe/\u591c\u95f4\u80cc\u666f\uff09",
-                "\u6df1\u8272\u6587\u5b57\uff08\u9002\u5408\u6d45\u8272\u5730\u56fe/\u660e\u4eae\u80cc\u666f\uff09"
+                "\u81ea\u52a8\u6a21\u5f0f\uff08\u6839\u636e\u80cc\u666f\u900f\u660e\u5ea6\u81ea\u52a8\u66f4\u6539\u6587\u5b57\u989c\u8272\uff09",
+                "\u6d45\u8272\u6a21\u5f0f\uff08\u59cb\u7ec8\u4f7f\u7528\u6d45\u8272\u6587\u5b57\uff09"
         };
-        int checked = isDarkTextMode(this) ? 1 : 0;
+        int checked = isAutoTextMode(this) ? 0 : 1;
         new AlertDialog.Builder(this)
                 .setTitle("\u9009\u62e9\u6587\u5b57\u6a21\u5f0f")
                 .setSingleChoiceItems(labels, checked, (dialog, which) -> {
-                    saveOverlayTextMode(which == 1 ? TEXT_MODE_DARK : TEXT_MODE_LIGHT);
+                    saveOverlayTextMode(which == 0 ? TEXT_MODE_AUTO : TEXT_MODE_LIGHT);
                     applyOverlayPreviewStyle();
                     notifyOverlayStyleChanged();
                     dialog.dismiss();
@@ -1026,7 +1176,7 @@ public class MainActivity extends Activity {
     private void saveOverlayTextMode(String mode) {
         getSharedPreferences(PREFS, MODE_PRIVATE)
                 .edit()
-                .putString(KEY_TEXT_MODE, TEXT_MODE_DARK.equals(mode) ? TEXT_MODE_DARK : TEXT_MODE_LIGHT)
+                .putString(KEY_TEXT_MODE, TEXT_MODE_AUTO.equals(mode) ? TEXT_MODE_AUTO : TEXT_MODE_LIGHT)
                 .apply();
     }
 
@@ -1040,6 +1190,30 @@ public class MainActivity extends Activity {
 
     private int previewDetailTextColor() {
         return usesDarkTextPalette(this) ? 0xFF1E3A8A : 0xFFC7D2FE;
+    }
+
+    private void updateBackgroundOpacityText(int percent) {
+        if (overlayBackgroundOpacityText != null) {
+            overlayBackgroundOpacityText.setText("\u4e3b\u80cc\u666f\u900f\u660e\u5ea6 " + clampBackgroundOpacityPercent(percent) + "%");
+        }
+    }
+
+    private void saveBackgroundOpacityPercent(int percent) {
+        getSharedPreferences(PREFS, MODE_PRIVATE)
+                .edit()
+                .putInt(KEY_BACKGROUND_OPACITY_PERCENT, clampBackgroundOpacityPercent(percent))
+                .apply();
+    }
+
+    private void migrateOverlayStylePrefs() {
+        SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
+        if (prefs.contains(KEY_BACKGROUND_OPACITY_PERCENT)) {
+            return;
+        }
+        int opacity = prefs.getBoolean(KEY_TRANSPARENT_BACKGROUND, false)
+                ? MIN_BACKGROUND_OPACITY_PERCENT
+                : DEFAULT_BACKGROUND_OPACITY_PERCENT;
+        prefs.edit().putInt(KEY_BACKGROUND_OPACITY_PERCENT, opacity).apply();
     }
 
     private void setPreviewVisibility(android.view.View view, boolean visible) {
@@ -1184,21 +1358,32 @@ public class MainActivity extends Activity {
     }
 
     static boolean isTransparentBackground(android.content.Context context) {
-        return isOverlayContentEnabled(context, KEY_TRANSPARENT_BACKGROUND);
+        return getBackgroundOpacityPercent(context) <= MIN_BACKGROUND_OPACITY_PERCENT;
     }
 
-    static boolean isDarkTextMode(android.content.Context context) {
-        return TEXT_MODE_DARK.equals(getOverlayTextMode(context));
+    static boolean isAutoTextMode(android.content.Context context) {
+        return TEXT_MODE_AUTO.equals(getOverlayTextMode(context));
     }
 
     static boolean usesDarkTextPalette(android.content.Context context) {
-        return isTransparentBackground(context) && isDarkTextMode(context);
+        return getBackgroundOpacityPercent(context) <= 55 && isAutoTextMode(context);
+    }
+
+    static int getBackgroundOpacityPercent(android.content.Context context) {
+        SharedPreferences prefs = context.getSharedPreferences(PREFS, MODE_PRIVATE);
+        if (prefs.contains(KEY_BACKGROUND_OPACITY_PERCENT)) {
+            return clampBackgroundOpacityPercent(
+                    prefs.getInt(KEY_BACKGROUND_OPACITY_PERCENT, DEFAULT_BACKGROUND_OPACITY_PERCENT));
+        }
+        return prefs.getBoolean(KEY_TRANSPARENT_BACKGROUND, false)
+                ? MIN_BACKGROUND_OPACITY_PERCENT
+                : DEFAULT_BACKGROUND_OPACITY_PERCENT;
     }
 
     static String getOverlayTextMode(android.content.Context context) {
         String mode = context.getSharedPreferences(PREFS, MODE_PRIVATE)
-                .getString(KEY_TEXT_MODE, TEXT_MODE_LIGHT);
-        return TEXT_MODE_DARK.equals(mode) ? TEXT_MODE_DARK : TEXT_MODE_LIGHT;
+                .getString(KEY_TEXT_MODE, TEXT_MODE_AUTO);
+        return TEXT_MODE_LIGHT.equals(mode) ? TEXT_MODE_LIGHT : TEXT_MODE_AUTO;
     }
 
     static boolean isOverlayContentEnabled(android.content.Context context, String key) {
@@ -1207,6 +1392,15 @@ public class MainActivity extends Activity {
 
     private static int clampOverlayScalePercent(int percent) {
         return Math.max(MIN_OVERLAY_SCALE_PERCENT, Math.min(MAX_OVERLAY_SCALE_PERCENT, percent));
+    }
+
+    private static int clampBackgroundOpacityPercent(int percent) {
+        return Math.max(MIN_BACKGROUND_OPACITY_PERCENT, Math.min(MAX_BACKGROUND_OPACITY_PERCENT, percent));
+    }
+
+    private static int withAlpha(int color, int alphaPercent) {
+        int alpha = Math.max(0, Math.min(255, Math.round(clampBackgroundOpacityPercent(alphaPercent) * 255f / 100f)));
+        return (alpha << 24) | (color & 0x00FFFFFF);
     }
 
     static String getTargetPackage(android.content.Context context) {

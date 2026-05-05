@@ -839,26 +839,18 @@ public class OverlayService extends Service {
     private GradientDrawable createMainPanelBackground() {
         GradientDrawable bg = new GradientDrawable();
         bg.setCornerRadius(dp(14));
-        if (MainActivity.isTransparentBackground(this)) {
-            bg.setColor(Color.TRANSPARENT);
-            bg.setStroke(0, Color.TRANSPARENT);
-        } else {
-            bg.setColor(0xEA111827);
-            bg.setStroke(dp(1), 0x22FFFFFF);
-        }
+        int opacity = MainActivity.getBackgroundOpacityPercent(this);
+        bg.setColor(withAlpha(0xFF111827, opacity));
+        bg.setStroke(dp(1), withAlpha(0xFFFFFFFF, Math.max(8, Math.round(opacity * 0.18f))));
         return bg;
     }
 
     private GradientDrawable createClusterPanelBackground() {
         GradientDrawable bg = new GradientDrawable();
         bg.setCornerRadius(clusterDp(14));
-        if (MainActivity.isTransparentBackground(this)) {
-            bg.setColor(Color.TRANSPARENT);
-            bg.setStroke(0, Color.TRANSPARENT);
-        } else {
-            bg.setColor(0xEA111827);
-            bg.setStroke(clusterDp(1), 0x22FFFFFF);
-        }
+        int opacity = MainActivity.getBackgroundOpacityPercent(this);
+        bg.setColor(withAlpha(0xFF111827, opacity));
+        bg.setStroke(clusterDp(1), withAlpha(0xFFFFFFFF, Math.max(8, Math.round(opacity * 0.18f))));
         return bg;
     }
 
@@ -902,6 +894,11 @@ public class OverlayService extends Service {
 
     private int detailTextColor() {
         return MainActivity.usesDarkTextPalette(this) ? 0xFF1E3A8A : 0xFFC7D2FE;
+    }
+
+    private int withAlpha(int color, int alphaPercent) {
+        int alpha = Math.max(0, Math.min(255, Math.round(alphaPercent * 255f / 100f)));
+        return (alpha << 24) | (color & 0x00FFFFFF);
     }
 
     private void syncModeVisibility() {
