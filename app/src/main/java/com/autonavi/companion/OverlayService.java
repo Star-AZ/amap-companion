@@ -396,11 +396,7 @@ public class OverlayService extends Service {
         clusterPanel = buildClusterPanel(clusterPresentation.getContext());
         clusterStage.addView(clusterPanel, clusterLayoutParams());
         clusterPresentation.setContentView(clusterStage);
-        WindowManager.LayoutParams attrs = clusterPresentation.getWindow().getAttributes();
-        attrs.flags |= WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-                | WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-                | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS;
-        clusterPresentation.getWindow().setAttributes(attrs);
+        configureClusterWindow();
         try {
             clusterPresentation.show();
             updateClusterPosition();
@@ -410,6 +406,34 @@ public class OverlayService extends Service {
             Log.e(TAG, "cluster mirror show failed", t);
             dismissClusterMirror();
         }
+    }
+
+    private void configureClusterWindow() {
+        if (clusterPresentation == null || clusterPresentation.getWindow() == null) {
+            return;
+        }
+        if (canUseOverlayWindowType()) {
+            int type = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+                    ? WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+                    : WindowManager.LayoutParams.TYPE_SYSTEM_ALERT;
+            clusterPresentation.getWindow().setType(type);
+        }
+        WindowManager.LayoutParams attrs = clusterPresentation.getWindow().getAttributes();
+        attrs.width = WindowManager.LayoutParams.MATCH_PARENT;
+        attrs.height = WindowManager.LayoutParams.MATCH_PARENT;
+        attrs.gravity = Gravity.TOP | Gravity.LEFT;
+        attrs.flags |= WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                | WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
+                | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+                | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS;
+        attrs.dimAmount = 0f;
+        clusterPresentation.getWindow().setAttributes(attrs);
+    }
+
+    private boolean canUseOverlayWindowType() {
+        return Build.VERSION.SDK_INT < Build.VERSION_CODES.M
+                || android.provider.Settings.canDrawOverlays(this);
     }
 
     private Display findClusterDisplay() {
