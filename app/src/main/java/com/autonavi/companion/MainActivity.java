@@ -36,7 +36,16 @@ public class MainActivity extends Activity {
     static final String KEY_UPDATE_URL = "update_url";
     static final String KEY_UPDATE_CHANNEL = "update_channel";
     static final String KEY_OVERLAY_SCALE_PERCENT = "overlay_scale_percent";
+    static final String KEY_MAIN_OVERLAY_ENABLED = "main_overlay_enabled";
+    static final String KEY_CLUSTER_MIRROR_ENABLED = "cluster_mirror_enabled";
+    static final String KEY_OVERLAY_X = "overlay_x";
+    static final String KEY_OVERLAY_Y = "overlay_y";
+    static final String KEY_CLUSTER_X = "cluster_x";
+    static final String KEY_CLUSTER_Y = "cluster_y";
+    static final String KEY_CLUSTER_SCALE_PERCENT = "cluster_scale_percent";
+    static final String ACTION_MAIN_OVERLAY_CHANGED = "com.autonavi.companion.MAIN_OVERLAY_CHANGED";
     static final String ACTION_OVERLAY_SCALE_CHANGED = "com.autonavi.companion.OVERLAY_SCALE_CHANGED";
+    static final String ACTION_CLUSTER_MIRROR_CHANGED = "com.autonavi.companion.CLUSTER_MIRROR_CHANGED";
     static final String DEFAULT_TARGET_PACKAGE = "com.autonavi.amapClone";
     static final String UPDATE_CHANNEL_SERVER = "server";
     static final String UPDATE_CHANNEL_GITHUB = "github";
@@ -52,6 +61,7 @@ public class MainActivity extends Activity {
     private TextView targetText;
     private TextView updateText;
     private TextView overlayScaleText;
+    private TextView clusterScaleText;
     private FrameLayout overlayPreviewStage;
     private LinearLayout overlayPreviewPanel;
 
@@ -111,12 +121,14 @@ public class MainActivity extends Activity {
 
         controls.addView(button("\u9009\u62e9\u76ee\u6807\u5e94\u7528", v -> chooseTargetApp(), 0xFF2563EB));
         controls.addView(button("\u6388\u6743\u60ac\u6d6e\u7a97", v -> requestOverlayPermission(), 0xFF475569));
-        controls.addView(button("\u542f\u52a8\u60ac\u6d6e\u7a97", v -> startOverlayService(), 0xFF0F766E));
+        controls.addView(button("\u542f\u52a8\u60ac\u6d6e\u7a97", v -> enableMainOverlay(), 0xFF0F766E));
         controls.addView(button("\u5173\u95ed\u60ac\u6d6e\u7a97", v -> stopOverlayService(), 0xFFB45309));
+        controls.addView(button(clusterMirrorButtonText(), v -> toggleClusterMirror((Button) v), 0xFF7C3AED));
         controls.addView(button("\u6253\u5f00\u76ee\u6807\u5e94\u7528", v -> openTargetApp(), 0xFF111827));
         controls.addView(button("\u9009\u62e9\u4e0b\u8f7d\u6e20\u9053", v -> chooseUpdateChannel(), 0xFF334155));
         controls.addView(button("\u68c0\u67e5\u66f4\u65b0", v -> checkForUpdates(true), 0xFF059669));
         addOverlayScaleControls(controls);
+        addClusterMirrorControls(controls);
 
         return scroll;
     }
@@ -163,6 +175,75 @@ public class MainActivity extends Activity {
 
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
         lp.setMargins(0, dp(10), 0, 0);
+        parent.addView(box, lp);
+    }
+
+    private void addClusterMirrorControls(LinearLayout parent) {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(2), dp(12), dp(2), 0);
+
+        TextView title = new TextView(this);
+        title.setText("\u526f\u5c4f\u60ac\u6d6e\u7a97");
+        title.setTextSize(14f);
+        title.setTextColor(0xFF111827);
+        title.setTypeface(Typeface.DEFAULT_BOLD);
+        box.addView(title, new LinearLayout.LayoutParams(-1, -2));
+
+        clusterScaleText = new TextView(this);
+        clusterScaleText.setTextSize(13f);
+        clusterScaleText.setTextColor(0xFF334155);
+        LinearLayout.LayoutParams scaleTextLp = new LinearLayout.LayoutParams(-1, -2);
+        scaleTextLp.setMargins(0, dp(8), 0, 0);
+        box.addView(clusterScaleText, scaleTextLp);
+
+        SeekBar seekBar = new SeekBar(this);
+        seekBar.setMax(MAX_OVERLAY_SCALE_PERCENT - MIN_OVERLAY_SCALE_PERCENT);
+        seekBar.setProgress(getClusterScalePercent(this) - MIN_OVERLAY_SCALE_PERCENT);
+        seekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar bar, int progress, boolean fromUser) {
+                int percent = MIN_OVERLAY_SCALE_PERCENT + progress;
+                updateClusterScaleText(percent);
+                if (fromUser) {
+                    saveClusterScalePercent(percent);
+                    notifyClusterMirrorChanged();
+                }
+            }
+
+            @Override
+            public void onStartTrackingTouch(SeekBar bar) {
+            }
+
+            @Override
+            public void onStopTrackingTouch(SeekBar bar) {
+                int percent = MIN_OVERLAY_SCALE_PERCENT + bar.getProgress();
+                saveClusterScalePercent(percent);
+                updateClusterScaleText(percent);
+                notifyClusterMirrorChanged();
+            }
+        });
+        box.addView(seekBar, new LinearLayout.LayoutParams(-1, -2));
+        updateClusterScaleText(getClusterScalePercent(this));
+
+        LinearLayout upRow = new LinearLayout(this);
+        upRow.setGravity(Gravity.CENTER);
+        upRow.addView(directionButton("\u4e0a", v -> moveClusterBy(0, -dp(16))));
+        box.addView(upRow, new LinearLayout.LayoutParams(-1, -2));
+
+        LinearLayout middleRow = new LinearLayout(this);
+        middleRow.setGravity(Gravity.CENTER);
+        middleRow.addView(directionButton("\u5de6", v -> moveClusterBy(-dp(16), 0)));
+        middleRow.addView(directionButton("\u53f3", v -> moveClusterBy(dp(16), 0)));
+        box.addView(middleRow, new LinearLayout.LayoutParams(-1, -2));
+
+        LinearLayout downRow = new LinearLayout(this);
+        downRow.setGravity(Gravity.CENTER);
+        downRow.addView(directionButton("\u4e0b", v -> moveClusterBy(0, dp(16))));
+        box.addView(downRow, new LinearLayout.LayoutParams(-1, -2));
+
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
+        lp.setMargins(0, dp(8), 0, 0);
         parent.addView(box, lp);
     }
 
@@ -383,6 +464,14 @@ public class MainActivity extends Activity {
         return b;
     }
 
+    private Button directionButton(String text, android.view.View.OnClickListener listener) {
+        Button b = button(text, listener, 0xFF475569);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(86), dp(42));
+        lp.setMargins(dp(5), dp(6), dp(5), 0);
+        b.setLayoutParams(lp);
+        return b;
+    }
+
     private void chooseTargetApp() {
         PackageManager pm = getPackageManager();
         int flags = Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? PackageManager.MATCH_ALL : 0;
@@ -463,7 +552,34 @@ public class MainActivity extends Activity {
     }
 
     private void stopOverlayService() {
-        stopService(new Intent(this, OverlayService.class));
+        saveMainOverlayEnabled(false);
+        notifyMainOverlayChanged();
+        stopServiceIfNoVisuals();
+    }
+
+    private void enableMainOverlay() {
+        saveMainOverlayEnabled(true);
+        startOverlayService();
+        notifyMainOverlayChanged();
+    }
+
+    private String clusterMirrorButtonText() {
+        return isClusterMirrorEnabled(this) ? "\u5173\u95ed\u4eea\u8868\u76d8\u955c\u50cf" : "\u5f00\u542f\u4eea\u8868\u76d8\u955c\u50cf";
+    }
+
+    private void toggleClusterMirror(Button button) {
+        boolean enabled = !isClusterMirrorEnabled(this);
+        getSharedPreferences(PREFS, MODE_PRIVATE)
+                .edit()
+                .putBoolean(KEY_CLUSTER_MIRROR_ENABLED, enabled)
+                .apply();
+        button.setText(clusterMirrorButtonText());
+        startOverlayService();
+        notifyClusterMirrorChanged();
+        stopServiceIfNoVisuals();
+        Toast.makeText(this,
+                enabled ? "\u5df2\u5f00\u542f\u4eea\u8868\u76d8\u955c\u50cf" : "\u5df2\u5173\u95ed\u4eea\u8868\u76d8\u955c\u50cf",
+                Toast.LENGTH_SHORT).show();
     }
 
     private void requestOverlayPermission() {
@@ -658,6 +774,56 @@ public class MainActivity extends Activity {
         sendBroadcast(intent);
     }
 
+    private void saveMainOverlayEnabled(boolean enabled) {
+        getSharedPreferences(PREFS, MODE_PRIVATE)
+                .edit()
+                .putBoolean(KEY_MAIN_OVERLAY_ENABLED, enabled)
+                .apply();
+    }
+
+    private void notifyMainOverlayChanged() {
+        Intent intent = new Intent(ACTION_MAIN_OVERLAY_CHANGED);
+        intent.setPackage(getPackageName());
+        sendBroadcast(intent);
+    }
+
+    private void notifyClusterMirrorChanged() {
+        Intent intent = new Intent(ACTION_CLUSTER_MIRROR_CHANGED);
+        intent.setPackage(getPackageName());
+        sendBroadcast(intent);
+    }
+
+    private void stopServiceIfNoVisuals() {
+        if (!isMainOverlayEnabled(this) && !isClusterMirrorEnabled(this)) {
+            stopService(new Intent(this, OverlayService.class));
+        }
+    }
+
+    private void saveClusterScalePercent(int percent) {
+        getSharedPreferences(PREFS, MODE_PRIVATE)
+                .edit()
+                .putInt(KEY_CLUSTER_SCALE_PERCENT, clampOverlayScalePercent(percent))
+                .apply();
+    }
+
+    private void updateClusterScaleText(int percent) {
+        if (clusterScaleText != null) {
+            clusterScaleText.setText("\u526f\u5c4f\u5927\u5c0f " + clampOverlayScalePercent(percent) + "%");
+        }
+    }
+
+    private void moveClusterBy(int dx, int dy) {
+        SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
+        int x = Math.max(0, prefs.getInt(KEY_CLUSTER_X, dp(24)) + dx);
+        int y = Math.max(0, prefs.getInt(KEY_CLUSTER_Y, dp(120)) + dy);
+        prefs.edit()
+                .putInt(KEY_CLUSTER_X, x)
+                .putInt(KEY_CLUSTER_Y, y)
+                .apply();
+        startOverlayService();
+        notifyClusterMirrorChanged();
+    }
+
     static int getOverlayScalePercent(android.content.Context context) {
         SharedPreferences prefs = context.getSharedPreferences(PREFS, MODE_PRIVATE);
         return clampOverlayScalePercent(prefs.getInt(KEY_OVERLAY_SCALE_PERCENT, DEFAULT_OVERLAY_SCALE_PERCENT));
@@ -665,6 +831,35 @@ public class MainActivity extends Activity {
 
     static float getOverlayScale(android.content.Context context) {
         return getOverlayScalePercent(context) / 100f;
+    }
+
+    static boolean isMainOverlayEnabled(android.content.Context context) {
+        return context.getSharedPreferences(PREFS, MODE_PRIVATE)
+                .getBoolean(KEY_MAIN_OVERLAY_ENABLED, true);
+    }
+
+    static boolean isClusterMirrorEnabled(android.content.Context context) {
+        return context.getSharedPreferences(PREFS, MODE_PRIVATE)
+                .getBoolean(KEY_CLUSTER_MIRROR_ENABLED, false);
+    }
+
+    static int getClusterScalePercent(android.content.Context context) {
+        SharedPreferences prefs = context.getSharedPreferences(PREFS, MODE_PRIVATE);
+        return clampOverlayScalePercent(prefs.getInt(KEY_CLUSTER_SCALE_PERCENT, DEFAULT_OVERLAY_SCALE_PERCENT));
+    }
+
+    static float getClusterScale(android.content.Context context) {
+        return getClusterScalePercent(context) / 100f;
+    }
+
+    static int getClusterX(android.content.Context context, int defaultValue) {
+        return Math.max(0, context.getSharedPreferences(PREFS, MODE_PRIVATE)
+                .getInt(KEY_CLUSTER_X, defaultValue));
+    }
+
+    static int getClusterY(android.content.Context context, int defaultValue) {
+        return Math.max(0, context.getSharedPreferences(PREFS, MODE_PRIVATE)
+                .getInt(KEY_CLUSTER_Y, defaultValue));
     }
 
     private static int clampOverlayScalePercent(int percent) {
