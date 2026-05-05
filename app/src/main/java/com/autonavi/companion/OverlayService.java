@@ -60,6 +60,7 @@ public class OverlayService extends Service {
     private TextView modeText;
     private TextView turnText;
     private LinearLayout laneSection;
+    private TextView laneTitleText;
     private LaneBarView laneBar;
     private LinearLayout lightRow;
     private TextView etaText;
@@ -71,6 +72,7 @@ public class OverlayService extends Service {
     private TextView clusterModeText;
     private TextView clusterTurnText;
     private LinearLayout clusterLaneSection;
+    private TextView clusterLaneTitleText;
     private LaneBarView clusterLaneBar;
     private LinearLayout clusterLightRow;
     private TextView clusterEtaText;
@@ -177,6 +179,7 @@ public class OverlayService extends Service {
         filter.addAction(MainActivity.ACTION_OVERLAY_SCALE_CHANGED);
         filter.addAction(MainActivity.ACTION_CLUSTER_MIRROR_CHANGED);
         filter.addAction(MainActivity.ACTION_OVERLAY_CONTENT_CHANGED);
+        filter.addAction(MainActivity.ACTION_OVERLAY_STYLE_CHANGED);
         try {
             registerReceiver(receiver, filter);
         } catch (Throwable t) {
@@ -196,14 +199,9 @@ public class OverlayService extends Service {
         panel.setOrientation(LinearLayout.VERTICAL);
         panel.setGravity(Gravity.CENTER_HORIZONTAL);
         panel.setPadding(dp(12), dp(10), dp(12), dp(10));
-        GradientDrawable bg = new GradientDrawable();
-        bg.setColor(0xEA111827);
-        bg.setCornerRadius(dp(14));
-        bg.setStroke(dp(1), 0x22FFFFFF);
-        panel.setBackground(bg);
+        applyPanelStyle();
 
         modeText = new TextView(this);
-        modeText.setTextColor(0xFFE8EAED);
         modeText.setTextSize(sp(13f));
         modeText.setSingleLine(true);
         modeText.setGravity(Gravity.CENTER);
@@ -240,13 +238,13 @@ public class OverlayService extends Service {
         laneBg.setStroke(dp(1), 0x1FFFFFFF);
         laneSection.setBackground(laneBg);
         laneSection.setVisibility(View.GONE);
-        TextView laneTitle = new TextView(this);
-        laneTitle.setText("\u8f66\u9053\u4fe1\u606f");
-        laneTitle.setTextColor(0xFFBAE6FD);
-        laneTitle.setTextSize(sp(11f));
-        laneTitle.setTypeface(Typeface.DEFAULT_BOLD);
-        laneTitle.setGravity(Gravity.CENTER);
-        laneSection.addView(laneTitle, new LinearLayout.LayoutParams(-2, -2));
+        laneTitleText = new TextView(this);
+        laneTitleText.setText("\u8f66\u9053\u4fe1\u606f");
+        laneTitleText.setTextColor(0xFFBAE6FD);
+        laneTitleText.setTextSize(sp(11f));
+        laneTitleText.setTypeface(Typeface.DEFAULT_BOLD);
+        laneTitleText.setGravity(Gravity.CENTER);
+        laneSection.addView(laneTitleText, new LinearLayout.LayoutParams(-2, -2));
         laneBar = new LaneBarView(this);
         laneBar.setFrameScaleMultiplier(overlayScale);
         laneBar.setScaleMultiplier(1.5f);
@@ -264,7 +262,6 @@ public class OverlayService extends Service {
         panel.addView(lightRow, new LinearLayout.LayoutParams(-2, -2));
 
         etaText = new TextView(this);
-        etaText.setTextColor(0xFFE8EAED);
         etaText.setTextSize(sp(15f));
         etaText.setSingleLine(false);
         etaText.setMaxLines(4);
@@ -272,18 +269,20 @@ public class OverlayService extends Service {
         etaText.setVisibility(View.GONE);
         panel.addView(etaText, new LinearLayout.LayoutParams(-2, -2));
 
-        alertText = compactText(0xFFFFF7ED, 14f);
+        alertText = compactText(14f, false);
         alertText.setVisibility(View.GONE);
         LinearLayout.LayoutParams alertLp = new LinearLayout.LayoutParams(-2, -2);
         alertLp.setMargins(0, dp(5), 0, 0);
         panel.addView(alertText, alertLp);
 
-        detailText = compactText(0xFFC7D2FE, 12f);
+        detailText = compactText(12f, true);
         detailText.setMaxLines(4);
         detailText.setVisibility(View.GONE);
         LinearLayout.LayoutParams detailLp = new LinearLayout.LayoutParams(-2, -2);
         detailLp.setMargins(0, dp(3), 0, 0);
         panel.addView(detailText, detailLp);
+
+        applyTextPalette();
 
         int type = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
                 ? WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
@@ -464,14 +463,9 @@ public class OverlayService extends Service {
         mirror.setOrientation(LinearLayout.VERTICAL);
         mirror.setGravity(Gravity.CENTER_HORIZONTAL);
         mirror.setPadding(clusterDp(12), clusterDp(10), clusterDp(12), clusterDp(10));
-        GradientDrawable bg = new GradientDrawable();
-        bg.setColor(0xEA111827);
-        bg.setCornerRadius(clusterDp(14));
-        bg.setStroke(clusterDp(1), 0x22FFFFFF);
-        mirror.setBackground(bg);
+        mirror.setBackground(createClusterPanelBackground());
 
         clusterModeText = new TextView(context);
-        clusterModeText.setTextColor(0xFFE8EAED);
         clusterModeText.setTextSize(clusterSp(13f));
         clusterModeText.setSingleLine(true);
         clusterModeText.setGravity(Gravity.CENTER);
@@ -508,13 +502,13 @@ public class OverlayService extends Service {
         laneBg.setStroke(clusterDp(1), 0x1FFFFFFF);
         clusterLaneSection.setBackground(laneBg);
         clusterLaneSection.setVisibility(View.GONE);
-        TextView laneTitle = new TextView(context);
-        laneTitle.setText("\u8f66\u9053\u4fe1\u606f");
-        laneTitle.setTextColor(0xFFBAE6FD);
-        laneTitle.setTextSize(clusterSp(11f));
-        laneTitle.setTypeface(Typeface.DEFAULT_BOLD);
-        laneTitle.setGravity(Gravity.CENTER);
-        clusterLaneSection.addView(laneTitle, new LinearLayout.LayoutParams(-2, -2));
+        clusterLaneTitleText = new TextView(context);
+        clusterLaneTitleText.setText("\u8f66\u9053\u4fe1\u606f");
+        clusterLaneTitleText.setTextColor(0xFFBAE6FD);
+        clusterLaneTitleText.setTextSize(clusterSp(11f));
+        clusterLaneTitleText.setTypeface(Typeface.DEFAULT_BOLD);
+        clusterLaneTitleText.setGravity(Gravity.CENTER);
+        clusterLaneSection.addView(clusterLaneTitleText, new LinearLayout.LayoutParams(-2, -2));
         clusterLaneBar = new LaneBarView(context);
         clusterLaneBar.setFrameScaleMultiplier(clusterScale);
         clusterLaneBar.setScaleMultiplier(1.5f);
@@ -532,7 +526,6 @@ public class OverlayService extends Service {
         mirror.addView(clusterLightRow, new LinearLayout.LayoutParams(-2, -2));
 
         clusterEtaText = new TextView(context);
-        clusterEtaText.setTextColor(0xFFE8EAED);
         clusterEtaText.setTextSize(clusterSp(15f));
         clusterEtaText.setSingleLine(false);
         clusterEtaText.setMaxLines(4);
@@ -540,18 +533,19 @@ public class OverlayService extends Service {
         clusterEtaText.setVisibility(View.GONE);
         mirror.addView(clusterEtaText, new LinearLayout.LayoutParams(-2, -2));
 
-        clusterAlertText = compactText(context, 0xFFFFF7ED, 14f, clusterScale);
+        clusterAlertText = compactText(context, 14f, false, clusterScale);
         clusterAlertText.setVisibility(View.GONE);
         LinearLayout.LayoutParams alertLp = new LinearLayout.LayoutParams(-2, -2);
         alertLp.setMargins(0, clusterDp(5), 0, 0);
         mirror.addView(clusterAlertText, alertLp);
 
-        clusterDetailText = compactText(context, 0xFFC7D2FE, 12f, clusterScale);
+        clusterDetailText = compactText(context, 12f, true, clusterScale);
         clusterDetailText.setMaxLines(4);
         clusterDetailText.setVisibility(View.GONE);
         LinearLayout.LayoutParams detailLp = new LinearLayout.LayoutParams(-2, -2);
         detailLp.setMargins(0, clusterDp(3), 0, 0);
         mirror.addView(clusterDetailText, detailLp);
+        applyTextPalette();
         return mirror;
     }
 
@@ -591,6 +585,7 @@ public class OverlayService extends Service {
         clusterModeText = null;
         clusterTurnText = null;
         clusterLaneSection = null;
+        clusterLaneTitleText = null;
         clusterLaneBar = null;
         clusterLightRow = null;
         clusterEtaText = null;
@@ -765,6 +760,10 @@ public class OverlayService extends Service {
             stopSelfIfNoVisuals();
             return;
         }
+        if (MainActivity.ACTION_OVERLAY_STYLE_CHANGED.equals(action)) {
+            applyPanelStyle();
+            return;
+        }
         if (MainActivity.ACTION_OVERLAY_CONTENT_CHANGED.equals(action)) {
             applyContentVisibilityPrefs();
             return;
@@ -827,6 +826,84 @@ public class OverlayService extends Service {
         updateClusterPosition();
     }
 
+    private void applyPanelStyle() {
+        if (panel != null) {
+            panel.setBackground(createMainPanelBackground());
+        }
+        if (clusterPanel != null) {
+            clusterPanel.setBackground(createClusterPanelBackground());
+        }
+        applyTextPalette();
+    }
+
+    private GradientDrawable createMainPanelBackground() {
+        GradientDrawable bg = new GradientDrawable();
+        bg.setCornerRadius(dp(14));
+        if (MainActivity.isTransparentBackground(this)) {
+            bg.setColor(Color.TRANSPARENT);
+            bg.setStroke(0, Color.TRANSPARENT);
+        } else {
+            bg.setColor(0xEA111827);
+            bg.setStroke(dp(1), 0x22FFFFFF);
+        }
+        return bg;
+    }
+
+    private GradientDrawable createClusterPanelBackground() {
+        GradientDrawable bg = new GradientDrawable();
+        bg.setCornerRadius(clusterDp(14));
+        if (MainActivity.isTransparentBackground(this)) {
+            bg.setColor(Color.TRANSPARENT);
+            bg.setStroke(0, Color.TRANSPARENT);
+        } else {
+            bg.setColor(0xEA111827);
+            bg.setStroke(clusterDp(1), 0x22FFFFFF);
+        }
+        return bg;
+    }
+
+    private void applyTextPalette() {
+        int primary = primaryTextColor();
+        int alert = alertTextColor();
+        int detail = detailTextColor();
+        if (modeText != null) {
+            modeText.setTextColor(primary);
+        }
+        if (etaText != null) {
+            etaText.setTextColor(primary);
+        }
+        if (alertText != null) {
+            alertText.setTextColor(alert);
+        }
+        if (detailText != null) {
+            detailText.setTextColor(detail);
+        }
+        if (clusterModeText != null) {
+            clusterModeText.setTextColor(primary);
+        }
+        if (clusterEtaText != null) {
+            clusterEtaText.setTextColor(primary);
+        }
+        if (clusterAlertText != null) {
+            clusterAlertText.setTextColor(alert);
+        }
+        if (clusterDetailText != null) {
+            clusterDetailText.setTextColor(detail);
+        }
+    }
+
+    private int primaryTextColor() {
+        return MainActivity.usesDarkTextPalette(this) ? 0xFF0F172A : 0xFFE8EAED;
+    }
+
+    private int alertTextColor() {
+        return MainActivity.usesDarkTextPalette(this) ? 0xFF7C2D12 : 0xFFFFF7ED;
+    }
+
+    private int detailTextColor() {
+        return MainActivity.usesDarkTextPalette(this) ? 0xFF1E3A8A : 0xFFC7D2FE;
+    }
+
     private void syncModeVisibility() {
         boolean visible = MainActivity.isModeVisible(this) && modeText != null;
         setPairedVisibility(modeText, clusterModeText, visible);
@@ -884,17 +961,17 @@ public class OverlayService extends Service {
         }
     }
 
-    private TextView compactText(int color, float size) {
-        return compactText(this, color, size);
+    private TextView compactText(float size, boolean detailStyle) {
+        return compactText(this, size, detailStyle);
     }
 
-    private TextView compactText(Context context, int color, float size) {
-        return compactText(context, color, size, overlayScale);
+    private TextView compactText(Context context, float size, boolean detailStyle) {
+        return compactText(context, size, detailStyle, overlayScale);
     }
 
-    private TextView compactText(Context context, int color, float size, float scale) {
+    private TextView compactText(Context context, float size, boolean detailStyle, float scale) {
         TextView view = new TextView(context);
-        view.setTextColor(color);
+        view.setTextColor(detailStyle ? detailTextColor() : alertTextColor());
         view.setTextSize(scaledSp(size, scale));
         view.setSingleLine(false);
         view.setMaxLines(2);

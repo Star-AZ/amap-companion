@@ -52,10 +52,13 @@ public class MainActivity extends Activity {
     static final String KEY_SHOW_ETA = "show_eta";
     static final String KEY_SHOW_ALERT = "show_alert";
     static final String KEY_SHOW_DETAIL = "show_detail";
+    static final String KEY_TRANSPARENT_BACKGROUND = "transparent_background";
+    static final String KEY_TEXT_MODE = "text_mode";
     static final String ACTION_MAIN_OVERLAY_CHANGED = "com.autonavi.companion.MAIN_OVERLAY_CHANGED";
     static final String ACTION_OVERLAY_SCALE_CHANGED = "com.autonavi.companion.OVERLAY_SCALE_CHANGED";
     static final String ACTION_CLUSTER_MIRROR_CHANGED = "com.autonavi.companion.CLUSTER_MIRROR_CHANGED";
     static final String ACTION_OVERLAY_CONTENT_CHANGED = "com.autonavi.companion.OVERLAY_CONTENT_CHANGED";
+    static final String ACTION_OVERLAY_STYLE_CHANGED = "com.autonavi.companion.OVERLAY_STYLE_CHANGED";
     static final String DEFAULT_TARGET_PACKAGE = "com.autonavi.amapClone";
     static final String UPDATE_CHANNEL_SERVER = "server";
     static final String UPDATE_CHANNEL_GITHUB = "github";
@@ -65,6 +68,8 @@ public class MainActivity extends Activity {
     static final String REPOSITORY_URL = "https://github.com/zuo-qirun/amap-companion";
     static final String LICENSE_URL = "https://github.com/zuo-qirun/amap-companion/blob/master/LICENSE";
     static final String DEFAULT_UPDATE_URL = SERVER_UPDATE_URL;
+    static final String TEXT_MODE_LIGHT = "light";
+    static final String TEXT_MODE_DARK = "dark";
     static final int MIN_OVERLAY_SCALE_PERCENT = 80;
     static final int MAX_OVERLAY_SCALE_PERCENT = 300;
     static final int DEFAULT_OVERLAY_SCALE_PERCENT = 200;
@@ -76,6 +81,7 @@ public class MainActivity extends Activity {
     private TextView clusterScaleText;
     private FrameLayout overlayPreviewStage;
     private LinearLayout overlayPreviewPanel;
+    private Button overlayTextModeButton;
     private TextView previewModeText;
     private TextView previewTurnText;
     private LinearLayout previewLightRow;
@@ -83,6 +89,7 @@ public class MainActivity extends Activity {
     private TextView previewEtaText;
     private TextView previewAlertText;
     private TextView previewDetailText;
+    private TextView previewLaneTitleText;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -337,11 +344,18 @@ public class MainActivity extends Activity {
         grid.addView(contentToggle("\u5269\u4f59\u91cc\u7a0b\u4e0e\u76ee\u7684\u5730", KEY_SHOW_ETA));
         grid.addView(contentToggle("\u9650\u901f/\u7535\u5b50\u773c/\u7ea2\u7eff\u706f\u4e2a\u6570", KEY_SHOW_ALERT));
         grid.addView(contentToggle("\u8be6\u7ec6\u72b6\u6001", KEY_SHOW_DETAIL));
+        grid.addView(styleToggle("\u60ac\u6d6e\u7a97\u4e3b\u80cc\u666f\u900f\u660e", KEY_TRANSPARENT_BACKGROUND));
+        overlayTextModeButton = button(textModeButtonText(), v -> chooseTextMode(), 0xFF475569);
+        LinearLayout.LayoutParams buttonLp = new LinearLayout.LayoutParams(-1, dp(42));
+        buttonLp.setMargins(0, dp(8), 0, 0);
+        overlayTextModeButton.setLayoutParams(buttonLp);
+        box.addView(overlayTextModeButton);
 
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
         lp.setMargins(0, dp(8), 0, 0);
         parent.addView(box, lp);
         updateOverlayPreviewContentVisibility();
+        applyOverlayPreviewStyle();
     }
 
     private void addOverlayPreview(LinearLayout parent) {
@@ -436,11 +450,7 @@ public class MainActivity extends Activity {
         panel.setOrientation(LinearLayout.VERTICAL);
         panel.setGravity(Gravity.CENTER_HORIZONTAL);
         panel.setPadding(dp(6), dp(5), dp(6), dp(5));
-        GradientDrawable bg = new GradientDrawable();
-        bg.setColor(0xEA111827);
-        bg.setCornerRadius(dp(7));
-        bg.setStroke(dp(1), 0x22FFFFFF);
-        panel.setBackground(bg);
+        panel.setBackground(createPreviewPanelBackground());
 
         previewModeText = new TextView(this);
         previewModeText.setText("\u5bfc\u822a \u00b7 \u5357\u56db\u73af\u4e1c\u8def\u8f85\u8def \u00b7 39 km/h");
@@ -482,12 +492,12 @@ public class MainActivity extends Activity {
         laneBg.setStroke(dp(1), 0x1FFFFFFF);
         previewLaneSection.setBackground(laneBg);
 
-        TextView laneTitle = new TextView(this);
-        laneTitle.setText("\u8f66\u9053\u4fe1\u606f");
-        laneTitle.setTextSize(5.5f);
-        laneTitle.setTextColor(0xFFBAE6FD);
-        laneTitle.setTypeface(Typeface.DEFAULT_BOLD);
-        previewLaneSection.addView(laneTitle, new LinearLayout.LayoutParams(-2, -2));
+        previewLaneTitleText = new TextView(this);
+        previewLaneTitleText.setText("\u8f66\u9053\u4fe1\u606f");
+        previewLaneTitleText.setTextSize(5.5f);
+        previewLaneTitleText.setTextColor(0xFFBAE6FD);
+        previewLaneTitleText.setTypeface(Typeface.DEFAULT_BOLD);
+        previewLaneSection.addView(previewLaneTitleText, new LinearLayout.LayoutParams(-2, -2));
 
         LaneBarView laneBar = new LaneBarView(this);
         laneBar.setFrameScaleMultiplier(1f);
@@ -909,6 +919,24 @@ public class MainActivity extends Activity {
         return checkBox;
     }
 
+    private CheckBox styleToggle(String text, String key) {
+        CheckBox checkBox = new CheckBox(this);
+        checkBox.setText(text);
+        checkBox.setChecked(isOverlayContentEnabled(this, key));
+        checkBox.setTextSize(14f);
+        checkBox.setTextColor(0xFF0F172A);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            checkBox.setButtonTintList(android.content.res.ColorStateList.valueOf(0xFF2563EB));
+        }
+        checkBox.setPadding(0, dp(2), 0, dp(2));
+        checkBox.setOnCheckedChangeListener((CompoundButton buttonView, boolean isChecked) -> {
+            saveOverlayContentEnabled(key, isChecked);
+            applyOverlayPreviewStyle();
+            notifyOverlayStyleChanged();
+        });
+        return checkBox;
+    }
+
     private void saveOverlayContentEnabled(String key, boolean enabled) {
         getSharedPreferences(PREFS, MODE_PRIVATE)
                 .edit()
@@ -924,6 +952,94 @@ public class MainActivity extends Activity {
         setPreviewVisibility(previewEtaText, isOverlayContentEnabled(this, KEY_SHOW_ETA));
         setPreviewVisibility(previewAlertText, isOverlayContentEnabled(this, KEY_SHOW_ALERT));
         setPreviewVisibility(previewDetailText, isOverlayContentEnabled(this, KEY_SHOW_DETAIL));
+    }
+
+    private void applyOverlayPreviewStyle() {
+        applyOverlayPreviewPanelStyle();
+        applyOverlayPreviewTextStyle();
+        if (overlayTextModeButton != null) {
+            overlayTextModeButton.setText(textModeButtonText());
+        }
+    }
+
+    private void applyOverlayPreviewPanelStyle() {
+        if (overlayPreviewPanel != null) {
+            overlayPreviewPanel.setBackground(createPreviewPanelBackground());
+        }
+    }
+
+    private void applyOverlayPreviewTextStyle() {
+        int primary = previewPrimaryTextColor();
+        int alert = previewAlertTextColor();
+        int detail = previewDetailTextColor();
+        if (previewModeText != null) {
+            previewModeText.setTextColor(primary);
+        }
+        if (previewEtaText != null) {
+            previewEtaText.setTextColor(primary);
+        }
+        if (previewAlertText != null) {
+            previewAlertText.setTextColor(alert);
+        }
+        if (previewDetailText != null) {
+            previewDetailText.setTextColor(detail);
+        }
+    }
+
+    private GradientDrawable createPreviewPanelBackground() {
+        GradientDrawable bg = new GradientDrawable();
+        bg.setCornerRadius(dp(7));
+        if (isTransparentBackground(this)) {
+            bg.setColor(Color.TRANSPARENT);
+            bg.setStroke(0, Color.TRANSPARENT);
+        } else {
+            bg.setColor(0xEA111827);
+            bg.setStroke(dp(1), 0x22FFFFFF);
+        }
+        return bg;
+    }
+
+    private String textModeButtonText() {
+        return isDarkTextMode(this)
+                ? "\u6587\u5b57\u6a21\u5f0f\uff1a\u6df1\u8272\uff08\u9002\u5408\u6d45\u80cc\u666f\uff09"
+                : "\u6587\u5b57\u6a21\u5f0f\uff1a\u6d45\u8272\uff08\u9002\u5408\u6df1\u80cc\u666f\uff09";
+    }
+
+    private void chooseTextMode() {
+        String[] labels = {
+                "\u6d45\u8272\u6587\u5b57\uff08\u9002\u5408\u6df1\u8272\u5730\u56fe/\u591c\u95f4\u80cc\u666f\uff09",
+                "\u6df1\u8272\u6587\u5b57\uff08\u9002\u5408\u6d45\u8272\u5730\u56fe/\u660e\u4eae\u80cc\u666f\uff09"
+        };
+        int checked = isDarkTextMode(this) ? 1 : 0;
+        new AlertDialog.Builder(this)
+                .setTitle("\u9009\u62e9\u6587\u5b57\u6a21\u5f0f")
+                .setSingleChoiceItems(labels, checked, (dialog, which) -> {
+                    saveOverlayTextMode(which == 1 ? TEXT_MODE_DARK : TEXT_MODE_LIGHT);
+                    applyOverlayPreviewStyle();
+                    notifyOverlayStyleChanged();
+                    dialog.dismiss();
+                })
+                .setNegativeButton("\u53d6\u6d88", null)
+                .show();
+    }
+
+    private void saveOverlayTextMode(String mode) {
+        getSharedPreferences(PREFS, MODE_PRIVATE)
+                .edit()
+                .putString(KEY_TEXT_MODE, TEXT_MODE_DARK.equals(mode) ? TEXT_MODE_DARK : TEXT_MODE_LIGHT)
+                .apply();
+    }
+
+    private int previewPrimaryTextColor() {
+        return usesDarkTextPalette(this) ? 0xFF0F172A : 0xFFE8EAED;
+    }
+
+    private int previewAlertTextColor() {
+        return usesDarkTextPalette(this) ? 0xFF7C2D12 : 0xFFFFF7ED;
+    }
+
+    private int previewDetailTextColor() {
+        return usesDarkTextPalette(this) ? 0xFF1E3A8A : 0xFFC7D2FE;
     }
 
     private void setPreviewVisibility(android.view.View view, boolean visible) {
@@ -960,6 +1076,12 @@ public class MainActivity extends Activity {
 
     private void notifyOverlayContentChanged() {
         Intent intent = new Intent(ACTION_OVERLAY_CONTENT_CHANGED);
+        intent.setPackage(getPackageName());
+        sendBroadcast(intent);
+    }
+
+    private void notifyOverlayStyleChanged() {
+        Intent intent = new Intent(ACTION_OVERLAY_STYLE_CHANGED);
         intent.setPackage(getPackageName());
         sendBroadcast(intent);
     }
@@ -1059,6 +1181,24 @@ public class MainActivity extends Activity {
 
     static boolean isDetailVisible(android.content.Context context) {
         return isOverlayContentEnabled(context, KEY_SHOW_DETAIL);
+    }
+
+    static boolean isTransparentBackground(android.content.Context context) {
+        return isOverlayContentEnabled(context, KEY_TRANSPARENT_BACKGROUND);
+    }
+
+    static boolean isDarkTextMode(android.content.Context context) {
+        return TEXT_MODE_DARK.equals(getOverlayTextMode(context));
+    }
+
+    static boolean usesDarkTextPalette(android.content.Context context) {
+        return isTransparentBackground(context) && isDarkTextMode(context);
+    }
+
+    static String getOverlayTextMode(android.content.Context context) {
+        String mode = context.getSharedPreferences(PREFS, MODE_PRIVATE)
+                .getString(KEY_TEXT_MODE, TEXT_MODE_LIGHT);
+        return TEXT_MODE_DARK.equals(mode) ? TEXT_MODE_DARK : TEXT_MODE_LIGHT;
     }
 
     static boolean isOverlayContentEnabled(android.content.Context context, String key) {
