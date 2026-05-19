@@ -60,11 +60,15 @@ public class MainActivity extends Activity {
     static final String KEY_BACKGROUND_OPACITY_PERCENT = "background_opacity_percent";
     static final String KEY_TEXT_MODE = "text_mode";
     static final String KEY_OVERLAY_UI_STYLE = "overlay_ui_style";
+    static final String KEY_AUTO_START_ENABLED = "auto_start_enabled";
+    static final String KEY_HIDE_MAIN_WHEN_TARGET_FOREGROUND = "hide_main_when_target_foreground";
+    static final String KEY_HIDE_CLUSTER_WHEN_INACTIVE = "hide_cluster_when_inactive";
     static final String ACTION_MAIN_OVERLAY_CHANGED = "com.autonavi.companion.MAIN_OVERLAY_CHANGED";
     static final String ACTION_OVERLAY_SCALE_CHANGED = "com.autonavi.companion.OVERLAY_SCALE_CHANGED";
     static final String ACTION_CLUSTER_MIRROR_CHANGED = "com.autonavi.companion.CLUSTER_MIRROR_CHANGED";
     static final String ACTION_OVERLAY_CONTENT_CHANGED = "com.autonavi.companion.OVERLAY_CONTENT_CHANGED";
     static final String ACTION_OVERLAY_STYLE_CHANGED = "com.autonavi.companion.OVERLAY_STYLE_CHANGED";
+    static final String ACTION_DISPLAY_POLICY_CHANGED = "com.autonavi.companion.DISPLAY_POLICY_CHANGED";
     static final String DEFAULT_TARGET_PACKAGE = "com.autonavi.amapClone";
     static final String UPDATE_CHANNEL_SERVER = "server";
     static final String UPDATE_CHANNEL_GITHUB = "github";
@@ -73,6 +77,8 @@ public class MainActivity extends Activity {
     static final String GITHUB_UPDATE_URL = "https://amap-companion.zuoqirun.top/update-github.json";
     static final String REPOSITORY_URL = "https://github.com/zuo-qirun/amap-companion";
     static final String LICENSE_URL = "https://github.com/zuo-qirun/amap-companion/blob/master/LICENSE";
+    static final String CUSTOM_MAP_SKILL_URL = "https://github.com/zuo-qirun/amap-cruise-wrapper-skill";
+    static final String CUSTOM_MAP_APK_URL = "https://github.com/zuo-qirun/amap-cruise-wrapper-skill/releases/download/v20260519-cruise-wrapper/_9.1.0.600087_cruise_lightsdata_clear_signed.apk";
     static final String DEFAULT_UPDATE_URL = SERVER_UPDATE_URL;
     static final String TEXT_MODE_LIGHT = "light";
     static final String TEXT_MODE_AUTO = "auto";
@@ -191,6 +197,7 @@ public class MainActivity extends Activity {
         addOverlayScaleControls(settings);
         addClusterMirrorControls(settings);
         addOverlayContentControls(settings);
+        addBehaviorControls(settings);
         addOpenSourceSection(wideLayout ? leftColumn : rightColumn, wideLayout);
 
         return scroll;
@@ -254,13 +261,28 @@ public class MainActivity extends Activity {
         licenseLp.setMargins(0, dp(10), 0, 0);
         section.addView(license, licenseLp);
 
+        TextView customMap = new TextView(this);
+        customMap.setText("\u5de1\u822a\u7ea2\u7eff\u706f\u5b9a\u5236\u5730\u56fe\n\u5de1\u822a\u5de6\u8f6c/\u76f4\u884c\u591a\u65b9\u5411\u5012\u8ba1\u65f6\u9700\u914d\u5408\u5b9a\u5236\u9ad8\u5fb7\u5730\u56fe\uff1a\n" + CUSTOM_MAP_SKILL_URL);
+        customMap.setTextSize(13f);
+        customMap.setTextColor(0xFF334155);
+        customMap.setLineSpacing(dp(2), 1.0f);
+        customMap.setTextIsSelectable(true);
+        LinearLayout.LayoutParams customMapLp = new LinearLayout.LayoutParams(-1, -2);
+        customMapLp.setMargins(0, dp(10), 0, 0);
+        section.addView(customMap, customMapLp);
+
         if (isWideLayout()) {
             addButtonPair(section,
                     button("\u6253\u5f00\u5f00\u6e90\u4ed3\u5e93", v -> openUrl(REPOSITORY_URL), 0xFF1D4ED8),
                     button("\u67e5\u770b\u8bb8\u53ef\u8bc1", v -> openUrl(LICENSE_URL), 0xFF475569));
+            addButtonPair(section,
+                    button("\u5b9a\u5236\u5730\u56fe Skill", v -> openUrl(CUSTOM_MAP_SKILL_URL), 0xFF0F766E),
+                    button("\u4e0b\u8f7d\u5df2\u6539\u9ad8\u5fb7", v -> openUrl(CUSTOM_MAP_APK_URL), 0xFFB45309));
         } else {
             section.addView(button("\u6253\u5f00\u5f00\u6e90\u4ed3\u5e93", v -> openUrl(REPOSITORY_URL), 0xFF1D4ED8));
             section.addView(button("\u67e5\u770b\u8bb8\u53ef\u8bc1", v -> openUrl(LICENSE_URL), 0xFF475569));
+            section.addView(button("\u5b9a\u5236\u5730\u56fe Skill", v -> openUrl(CUSTOM_MAP_SKILL_URL), 0xFF0F766E));
+            section.addView(button("\u4e0b\u8f7d\u5df2\u6539\u9ad8\u5fb7", v -> openUrl(CUSTOM_MAP_APK_URL), 0xFFB45309));
         }
     }
 
@@ -453,6 +475,50 @@ public class MainActivity extends Activity {
         parent.addView(box, lp);
         updateOverlayPreviewContentVisibility();
         applyOverlayPreviewStyle();
+    }
+
+    private void addBehaviorControls(LinearLayout parent) {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(2), dp(12), dp(2), 0);
+
+        TextView title = new TextView(this);
+        title.setText("自动启动与显示策略");
+        title.setTextSize(14f);
+        title.setTextColor(0xFF111827);
+        title.setTypeface(Typeface.DEFAULT_BOLD);
+        box.addView(title, new LinearLayout.LayoutParams(-1, -2));
+
+        TextView hint = new TextView(this);
+        hint.setText("这些选项只控制本程序窗口，不会主动唤醒或启动目标高德应用。");
+        hint.setTextSize(12f);
+        hint.setTextColor(0xFF64748B);
+        LinearLayout.LayoutParams hintLp = new LinearLayout.LayoutParams(-1, -2);
+        hintLp.setMargins(0, dp(6), 0, 0);
+        box.addView(hint, hintLp);
+
+        LinearLayout grid = new LinearLayout(this);
+        grid.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout.LayoutParams gridLp = new LinearLayout.LayoutParams(-1, -2);
+        gridLp.setMargins(0, dp(6), 0, 0);
+        box.addView(grid, gridLp);
+
+        if (isWideLayout()) {
+            addTogglePair(grid,
+                    behaviorToggle("开机自动启动", KEY_AUTO_START_ENABLED),
+                    behaviorToggle("高德前台隐藏中控悬浮窗", KEY_HIDE_MAIN_WHEN_TARGET_FOREGROUND));
+            addTogglePair(grid,
+                    behaviorToggle("导航/巡航退出隐藏仪表", KEY_HIDE_CLUSTER_WHEN_INACTIVE),
+                    null);
+        } else {
+            grid.addView(behaviorToggle("开机自动启动", KEY_AUTO_START_ENABLED));
+            grid.addView(behaviorToggle("高德前台隐藏中控悬浮窗", KEY_HIDE_MAIN_WHEN_TARGET_FOREGROUND));
+            grid.addView(behaviorToggle("导航/巡航退出隐藏仪表", KEY_HIDE_CLUSTER_WHEN_INACTIVE));
+        }
+
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
+        lp.setMargins(0, dp(8), 0, 0);
+        parent.addView(box, lp);
     }
 
     private void addBackgroundOpacityControls(LinearLayout parent) {
@@ -863,15 +929,19 @@ public class MainActivity extends Activity {
     }
 
     private void startOverlayService() {
-        Intent intent = new Intent(this, OverlayService.class);
+        startOverlayService(this);
+    }
+
+    static void startOverlayService(Context context) {
+        Intent intent = new Intent(context, OverlayService.class);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             try {
-                Context.class.getMethod("startForegroundService", Intent.class).invoke(this, intent);
+                Context.class.getMethod("startForegroundService", Intent.class).invoke(context, intent);
             } catch (Throwable ignored) {
-                startService(intent);
+                context.startService(intent);
             }
         } else {
-            startService(intent);
+            context.startService(intent);
         }
     }
 
@@ -1147,7 +1217,32 @@ public class MainActivity extends Activity {
         return checkBox;
     }
 
+    private CheckBox behaviorToggle(String text, String key) {
+        CheckBox checkBox = new CheckBox(this);
+        checkBox.setText(text);
+        checkBox.setChecked(isBehaviorEnabled(this, key));
+        checkBox.setTextSize(14f);
+        checkBox.setTextColor(0xFF0F172A);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            checkBox.setButtonTintList(android.content.res.ColorStateList.valueOf(0xFF2563EB));
+        }
+        checkBox.setPadding(0, dp(2), 0, dp(2));
+        checkBox.setOnCheckedChangeListener((CompoundButton buttonView, boolean isChecked) -> {
+            saveBehaviorEnabled(key, isChecked);
+            startOverlayService();
+            notifyDisplayPolicyChanged();
+        });
+        return checkBox;
+    }
+
     private void saveOverlayContentEnabled(String key, boolean enabled) {
+        getSharedPreferences(PREFS, MODE_PRIVATE)
+                .edit()
+                .putBoolean(key, enabled)
+                .apply();
+    }
+
+    private void saveBehaviorEnabled(String key, boolean enabled) {
         getSharedPreferences(PREFS, MODE_PRIVATE)
                 .edit()
                 .putBoolean(key, enabled)
@@ -1351,6 +1446,12 @@ public class MainActivity extends Activity {
         sendBroadcast(intent);
     }
 
+    private void notifyDisplayPolicyChanged() {
+        Intent intent = new Intent(ACTION_DISPLAY_POLICY_CHANGED);
+        intent.setPackage(getPackageName());
+        sendBroadcast(intent);
+    }
+
     private void stopServiceIfNoVisuals() {
         if (!isMainOverlayEnabled(this) && !isClusterMirrorEnabled(this)) {
             stopService(new Intent(this, OverlayService.class));
@@ -1453,6 +1554,18 @@ public class MainActivity extends Activity {
                 .getBoolean(KEY_CLUSTER_MIRROR_ENABLED, false);
     }
 
+    static boolean isAutoStartEnabled(android.content.Context context) {
+        return isBehaviorEnabled(context, KEY_AUTO_START_ENABLED);
+    }
+
+    static boolean isHideMainWhenTargetForegroundEnabled(android.content.Context context) {
+        return isBehaviorEnabled(context, KEY_HIDE_MAIN_WHEN_TARGET_FOREGROUND);
+    }
+
+    static boolean isHideClusterWhenInactiveEnabled(android.content.Context context) {
+        return isBehaviorEnabled(context, KEY_HIDE_CLUSTER_WHEN_INACTIVE);
+    }
+
     static int getClusterScalePercent(android.content.Context context) {
         SharedPreferences prefs = context.getSharedPreferences(PREFS, MODE_PRIVATE);
         return clampOverlayScalePercent(prefs.getInt(KEY_CLUSTER_SCALE_PERCENT, DEFAULT_OVERLAY_SCALE_PERCENT));
@@ -1546,6 +1659,11 @@ public class MainActivity extends Activity {
 
     static boolean isOverlayContentEnabled(android.content.Context context, String key) {
         return context.getSharedPreferences(PREFS, MODE_PRIVATE).getBoolean(key, true);
+    }
+
+    private static boolean isBehaviorEnabled(android.content.Context context, String key) {
+        boolean defaultValue = KEY_AUTO_START_ENABLED.equals(key);
+        return context.getSharedPreferences(PREFS, MODE_PRIVATE).getBoolean(key, defaultValue);
     }
 
     private static int clampOverlayScalePercent(int percent) {
