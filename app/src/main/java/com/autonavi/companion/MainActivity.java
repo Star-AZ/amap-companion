@@ -278,18 +278,13 @@ public class MainActivity extends Activity {
                     button("\u6253\u5f00\u5f00\u6e90\u4ed3\u5e93", v -> openUrl(REPOSITORY_URL), 0xFF1D4ED8),
                     button("\u67e5\u770b\u8bb8\u53ef\u8bc1", v -> openUrl(LICENSE_URL), 0xFF475569));
             addButtonPair(section,
-                    button("\u5b9a\u5236\u5730\u56fe Skill", v -> openUrl(CUSTOM_MAP_SKILL_URL), 0xFF0F766E),
-                    button("\u4e0b\u8f7d\u5df2\u6539\u9ad8\u5fb7", v -> openUrl(CUSTOM_MAP_APK_URL), 0xFFB45309));
-            addButtonPair(section,
-                    button("Skill \u955c\u50cf", v -> openUrl(CUSTOM_MAP_SKILL_MIRROR_URL), 0xFF047857),
-                    button("\u9ad8\u5fb7\u955c\u50cf\u4e0b\u8f7d", v -> openUrl(CUSTOM_MAP_APK_MIRROR_URL), 0xFF92400E));
+                    button("\u5b9a\u5236\u5730\u56fe Skill", v -> chooseDownloadSource("\u5b9a\u5236\u5730\u56fe Skill", CUSTOM_MAP_SKILL_URL, CUSTOM_MAP_SKILL_MIRROR_URL), 0xFF0F766E),
+                    button("\u4e0b\u8f7d\u5df2\u6539\u9ad8\u5fb7", v -> chooseDownloadSource("\u4e0b\u8f7d\u5df2\u6539\u9ad8\u5fb7", CUSTOM_MAP_APK_URL, CUSTOM_MAP_APK_MIRROR_URL), 0xFFB45309));
         } else {
             section.addView(button("\u6253\u5f00\u5f00\u6e90\u4ed3\u5e93", v -> openUrl(REPOSITORY_URL), 0xFF1D4ED8));
             section.addView(button("\u67e5\u770b\u8bb8\u53ef\u8bc1", v -> openUrl(LICENSE_URL), 0xFF475569));
-            section.addView(button("\u5b9a\u5236\u5730\u56fe Skill", v -> openUrl(CUSTOM_MAP_SKILL_URL), 0xFF0F766E));
-            section.addView(button("\u4e0b\u8f7d\u5df2\u6539\u9ad8\u5fb7", v -> openUrl(CUSTOM_MAP_APK_URL), 0xFFB45309));
-            section.addView(button("Skill \u955c\u50cf", v -> openUrl(CUSTOM_MAP_SKILL_MIRROR_URL), 0xFF047857));
-            section.addView(button("\u9ad8\u5fb7\u955c\u50cf\u4e0b\u8f7d", v -> openUrl(CUSTOM_MAP_APK_MIRROR_URL), 0xFF92400E));
+            section.addView(button("\u5b9a\u5236\u5730\u56fe Skill", v -> chooseDownloadSource("\u5b9a\u5236\u5730\u56fe Skill", CUSTOM_MAP_SKILL_URL, CUSTOM_MAP_SKILL_MIRROR_URL), 0xFF0F766E));
+            section.addView(button("\u4e0b\u8f7d\u5df2\u6539\u9ad8\u5fb7", v -> chooseDownloadSource("\u4e0b\u8f7d\u5df2\u6539\u9ad8\u5fb7", CUSTOM_MAP_APK_URL, CUSTOM_MAP_APK_MIRROR_URL), 0xFFB45309));
         }
     }
 
@@ -1034,6 +1029,23 @@ public class MainActivity extends Activity {
         } catch (Throwable t) {
             Toast.makeText(this, "\u65e0\u6cd5\u6253\u5f00\u94fe\u63a5", Toast.LENGTH_SHORT).show();
         }
+    }
+
+    private void chooseDownloadSource(String title, String githubUrl, String mirrorUrl) {
+        String[] labels = {
+                "\u955c\u50cf\u7ad9\uff08\u5feb\uff09\n" + mirrorUrl,
+                "GitHub \u539f\u7ad9\uff08\u53ef\u80fd\u8f83\u6162\uff09\n" + githubUrl
+        };
+        new AlertDialog.Builder(this)
+                .setTitle(title)
+                .setItems(labels, (dialog, which) -> {
+                    if (which == 0) {
+                        openUrl(mirrorUrl);
+                    } else {
+                        openUrl(githubUrl);
+                    }
+                })
+                .show();
     }
 
     private void chooseUpdateChannel() {
