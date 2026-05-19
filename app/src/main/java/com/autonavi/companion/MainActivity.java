@@ -79,6 +79,8 @@ public class MainActivity extends Activity {
     static final String LICENSE_URL = "https://github.com/zuo-qirun/amap-companion/blob/master/LICENSE";
     static final String CUSTOM_MAP_SKILL_URL = "https://github.com/zuo-qirun/amap-cruise-wrapper-skill";
     static final String CUSTOM_MAP_APK_URL = "https://github.com/zuo-qirun/amap-cruise-wrapper-skill/releases/download/v20260519-cruise-wrapper/_9.1.0.600087_cruise_lightsdata_clear_signed.apk";
+    static final String CUSTOM_MAP_SKILL_MIRROR_URL = "https://gh.llkk.cc/https://github.com/zuo-qirun/amap-cruise-wrapper-skill";
+    static final String CUSTOM_MAP_APK_MIRROR_URL = "https://gh.llkk.cc/https://github.com/zuo-qirun/amap-cruise-wrapper-skill/releases/download/v20260519-cruise-wrapper/_9.1.0.600087_cruise_lightsdata_clear_signed.apk";
     static final String DEFAULT_UPDATE_URL = SERVER_UPDATE_URL;
     static final String TEXT_MODE_LIGHT = "light";
     static final String TEXT_MODE_AUTO = "auto";
@@ -262,7 +264,7 @@ public class MainActivity extends Activity {
         section.addView(license, licenseLp);
 
         TextView customMap = new TextView(this);
-        customMap.setText("\u5de1\u822a\u7ea2\u7eff\u706f\u5b9a\u5236\u5730\u56fe\n\u5de1\u822a\u5de6\u8f6c/\u76f4\u884c\u591a\u65b9\u5411\u5012\u8ba1\u65f6\u9700\u914d\u5408\u5b9a\u5236\u9ad8\u5fb7\u5730\u56fe\uff1a\n" + CUSTOM_MAP_SKILL_URL);
+        customMap.setText("\u5de1\u822a\u7ea2\u7eff\u706f\u5b9a\u5236\u5730\u56fe\n\u5de1\u822a\u5de6\u8f6c/\u76f4\u884c\u591a\u65b9\u5411\u5012\u8ba1\u65f6\u9700\u914d\u5408\u5b9a\u5236\u9ad8\u5fb7\u5730\u56fe\uff1a\nGitHub: " + CUSTOM_MAP_SKILL_URL + "\n\u955c\u50cf: " + CUSTOM_MAP_SKILL_MIRROR_URL);
         customMap.setTextSize(13f);
         customMap.setTextColor(0xFF334155);
         customMap.setLineSpacing(dp(2), 1.0f);
@@ -278,11 +280,16 @@ public class MainActivity extends Activity {
             addButtonPair(section,
                     button("\u5b9a\u5236\u5730\u56fe Skill", v -> openUrl(CUSTOM_MAP_SKILL_URL), 0xFF0F766E),
                     button("\u4e0b\u8f7d\u5df2\u6539\u9ad8\u5fb7", v -> openUrl(CUSTOM_MAP_APK_URL), 0xFFB45309));
+            addButtonPair(section,
+                    button("Skill \u955c\u50cf", v -> openUrl(CUSTOM_MAP_SKILL_MIRROR_URL), 0xFF047857),
+                    button("\u9ad8\u5fb7\u955c\u50cf\u4e0b\u8f7d", v -> openUrl(CUSTOM_MAP_APK_MIRROR_URL), 0xFF92400E));
         } else {
             section.addView(button("\u6253\u5f00\u5f00\u6e90\u4ed3\u5e93", v -> openUrl(REPOSITORY_URL), 0xFF1D4ED8));
             section.addView(button("\u67e5\u770b\u8bb8\u53ef\u8bc1", v -> openUrl(LICENSE_URL), 0xFF475569));
             section.addView(button("\u5b9a\u5236\u5730\u56fe Skill", v -> openUrl(CUSTOM_MAP_SKILL_URL), 0xFF0F766E));
             section.addView(button("\u4e0b\u8f7d\u5df2\u6539\u9ad8\u5fb7", v -> openUrl(CUSTOM_MAP_APK_URL), 0xFFB45309));
+            section.addView(button("Skill \u955c\u50cf", v -> openUrl(CUSTOM_MAP_SKILL_MIRROR_URL), 0xFF047857));
+            section.addView(button("\u9ad8\u5fb7\u955c\u50cf\u4e0b\u8f7d", v -> openUrl(CUSTOM_MAP_APK_MIRROR_URL), 0xFF92400E));
         }
     }
 
