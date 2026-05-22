@@ -83,7 +83,6 @@ public class MainActivity extends Activity {
     static final String KEY_OVERLAY_UI_STYLE = "overlay_ui_style";
     static final String KEY_AUTO_START_ENABLED = "auto_start_enabled";
     static final String KEY_SHOW_MAIN_WHEN_TARGET_FOREGROUND = "show_main_when_target_foreground";
-    static final String KEY_KEEP_BROADCAST_LISTENER_ENABLED = "keep_broadcast_listener_enabled";
     static final String KEY_HIDE_MAIN_WHEN_TARGET_FOREGROUND = "hide_main_when_target_foreground";
     static final String KEY_HIDE_CLUSTER_WHEN_INACTIVE = "hide_cluster_when_inactive";
     static final String ACTION_MAIN_OVERLAY_CHANGED = "com.autonavi.companion.MAIN_OVERLAY_CHANGED";
@@ -545,7 +544,7 @@ public class MainActivity extends Activity {
         box.addView(title, new LinearLayout.LayoutParams(-1, -2));
 
         TextView hint = new TextView(this);
-        hint.setText("这些选项只控制本程序窗口，不会主动唤醒或启动目标高德应用。自动显示和持续监听依赖高德广播；高德前台隐藏才需要“使用情况访问权限”。");
+        hint.setText("这些选项只控制本程序窗口，不会主动唤醒或启动目标高德应用。高德广播自动显示会在后台持续监听广播；高德前台隐藏才需要“使用情况访问权限”。");
         hint.setTextSize(12f);
         hint.setTextColor(0xFF64748B);
         LinearLayout.LayoutParams hintLp = new LinearLayout.LayoutParams(-1, -2);
@@ -561,10 +560,7 @@ public class MainActivity extends Activity {
         if (isWideLayout()) {
             addTogglePair(grid,
                     behaviorToggle("开机自动启动", KEY_AUTO_START_ENABLED),
-                    behaviorToggle("高德打开自动显示悬浮窗", KEY_SHOW_MAIN_WHEN_TARGET_FOREGROUND));
-            addTogglePair(grid,
-                    behaviorToggle("后台持续监听高德广播", KEY_KEEP_BROADCAST_LISTENER_ENABLED),
-                    null);
+                    behaviorToggle("高德广播自动显示悬浮窗", KEY_SHOW_MAIN_WHEN_TARGET_FOREGROUND));
             addTogglePair(grid,
                     behaviorToggle("高德前台隐藏中控悬浮窗", KEY_HIDE_MAIN_WHEN_TARGET_FOREGROUND),
                     null);
@@ -573,8 +569,7 @@ public class MainActivity extends Activity {
                     null);
         } else {
             grid.addView(behaviorToggle("开机自动启动", KEY_AUTO_START_ENABLED));
-            grid.addView(behaviorToggle("高德打开自动显示悬浮窗", KEY_SHOW_MAIN_WHEN_TARGET_FOREGROUND));
-            grid.addView(behaviorToggle("后台持续监听高德广播", KEY_KEEP_BROADCAST_LISTENER_ENABLED));
+            grid.addView(behaviorToggle("高德广播自动显示悬浮窗", KEY_SHOW_MAIN_WHEN_TARGET_FOREGROUND));
             grid.addView(behaviorToggle("高德前台隐藏中控悬浮窗", KEY_HIDE_MAIN_WHEN_TARGET_FOREGROUND));
             grid.addView(behaviorToggle("导航/巡航退出隐藏仪表", KEY_HIDE_CLUSTER_WHEN_INACTIVE));
         }
@@ -2004,10 +1999,6 @@ public class MainActivity extends Activity {
 
     static boolean isShowMainWhenTargetForegroundEnabled(android.content.Context context) {
         return isBehaviorEnabled(context, KEY_SHOW_MAIN_WHEN_TARGET_FOREGROUND);
-    }
-
-    static boolean isKeepBroadcastListenerEnabled(android.content.Context context) {
-        return isBehaviorEnabled(context, KEY_KEEP_BROADCAST_LISTENER_ENABLED);
     }
 
     static boolean isHideClusterWhenInactiveEnabled(android.content.Context context) {

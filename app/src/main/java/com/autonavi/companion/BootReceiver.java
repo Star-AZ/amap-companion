@@ -17,7 +17,7 @@ public class BootReceiver extends BroadcastReceiver {
         if (Intent.ACTION_BOOT_COMPLETED.equals(action)
                 || Intent.ACTION_MY_PACKAGE_REPLACED.equals(action)) {
             if (!MainActivity.isAutoStartEnabled(context)
-                    && !MainActivity.isKeepBroadcastListenerEnabled(context)) {
+                    && !MainActivity.isShowMainWhenTargetForegroundEnabled(context)) {
                 return;
             }
             Log.d(TAG, "auto start overlay service after " + action);

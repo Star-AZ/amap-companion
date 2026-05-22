@@ -1367,8 +1367,7 @@ public class OverlayService extends Service {
     private void stopSelfIfNoVisuals() {
         if (!MainActivity.isMainOverlayEnabled(this)
                 && !MainActivity.isClusterMirrorEnabled(this)
-                && !MainActivity.isShowMainWhenTargetForegroundEnabled(this)
-                && !MainActivity.isKeepBroadcastListenerEnabled(this)) {
+                && !MainActivity.isShowMainWhenTargetForegroundEnabled(this)) {
             stopSelf();
         }
     }
