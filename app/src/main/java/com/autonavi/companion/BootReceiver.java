@@ -10,12 +10,16 @@ public class BootReceiver extends BroadcastReceiver {
 
     @Override
     public void onReceive(Context context, Intent intent) {
-        if (context == null || !MainActivity.isAutoStartEnabled(context)) {
+        if (context == null) {
             return;
         }
         String action = intent == null ? "" : intent.getAction();
         if (Intent.ACTION_BOOT_COMPLETED.equals(action)
                 || Intent.ACTION_MY_PACKAGE_REPLACED.equals(action)) {
+            if (!MainActivity.isAutoStartEnabled(context)
+                    && !MainActivity.isKeepBroadcastListenerEnabled(context)) {
+                return;
+            }
             Log.d(TAG, "auto start overlay service after " + action);
             MainActivity.startOverlayService(context);
         }

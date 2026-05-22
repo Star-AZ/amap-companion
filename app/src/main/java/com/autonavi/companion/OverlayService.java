@@ -61,6 +61,7 @@ public class OverlayService extends Service {
     private static final long LIGHT_TICK_MS = 1000L;
     private static final long DISPLAY_POLICY_POLL_MS = 1500L;
     private static final long NAVIGATION_ACTIVE_TTL_MS = 12000L;
+    private static final long TARGET_BROADCAST_ACTIVE_TTL_MS = 300000L;
     private static final Pattern CAMERA_LIGHT_PATTERN = Pattern.compile(
             "CameraLightInfo\\{([^}]*)\\}");
 
@@ -135,16 +136,20 @@ public class OverlayService extends Service {
     private float overlayScale = 2f;
     private float clusterScale = 2f;
     private boolean targetAppForeground;
+    private boolean targetBroadcastActive;
     private boolean navigationOrCruiseActive;
     private long lastNavigationSignalAt;
+    private long lastTargetBroadcastAt;
     private final View.OnLayoutChangeListener clusterBoundsListener =
             (v, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) -> updateClusterPosition();
 
     private final Runnable lanePoll = new Runnable() {
         @Override
         public void run() {
-            requestLaneInfo();
-            requestTrafficLightInfo();
+            if (shouldRequestAmapData()) {
+                requestLaneInfo();
+                requestTrafficLightInfo();
+            }
             mainHandler.postDelayed(this, 6000L);
         }
     };
@@ -188,7 +193,9 @@ public class OverlayService extends Service {
         ensureOverlay();
         ensureClusterMirror();
         stopSelfIfNoVisuals();
-        requestLaneInfo();
+        if (shouldRequestAmapData()) {
+            requestLaneInfo();
+        }
         mainHandler.postDelayed(lanePoll, 6000L);
         mainHandler.post(displayPolicyPoll);
     }
@@ -198,7 +205,9 @@ public class OverlayService extends Service {
         ensureOverlay();
         ensureClusterMirror();
         stopSelfIfNoVisuals();
-        requestLaneInfo();
+        if (shouldRequestAmapData()) {
+            requestLaneInfo();
+        }
         return START_STICKY;
     }
 
@@ -230,6 +239,7 @@ public class OverlayService extends Service {
     private void registerAmapReceivers() {
         IntentFilter filter = new IntentFilter();
         filter.addAction(ACTION_SEND);
+        filter.addAction(ACTION_RECV);
         filter.addAction("AUTO_GUIDE_INFO_FOR_INTERNAL_WIDGET");
         filter.addAction("AUTO_STATUS_FOR_INTERNAL_WIDGET");
         filter.addAction("com.autonavi.amapauto.AUTO_WIDGET_UPDATE_ROAD_NAME_INFO");
@@ -317,7 +327,7 @@ public class OverlayService extends Service {
             return;
         }
         boolean enabled = (MainActivity.isMainOverlayEnabled(this)
-                || shouldShowMainOverlayForTargetForeground())
+                || shouldShowMainOverlayForTargetBroadcast())
                 && !shouldHideMainOverlayForTargetForeground();
         boolean attached = panel.getParent() != null;
         if (enabled && !attached) {
@@ -1042,8 +1052,7 @@ public class OverlayService extends Service {
 
     private void refreshDisplayPolicies() {
         boolean foregroundChanged = false;
-        if (MainActivity.isHideMainWhenTargetForegroundEnabled(this)
-                || MainActivity.isShowMainWhenTargetForegroundEnabled(this)) {
+        if (MainActivity.isHideMainWhenTargetForegroundEnabled(this)) {
             boolean foreground = isTargetAppForeground();
             foregroundChanged = targetAppForeground != foreground;
             targetAppForeground = foreground;
@@ -1052,8 +1061,9 @@ public class OverlayService extends Service {
             foregroundChanged = true;
         }
 
+        boolean targetBroadcastChanged = expireTargetBroadcastActivityIfNeeded();
         boolean navigationChanged = expireNavigationActivityIfNeeded();
-        if (foregroundChanged) {
+        if (foregroundChanged || targetBroadcastChanged) {
             syncMainOverlayAttachment();
         }
         if (navigationChanged) {
@@ -1068,8 +1078,8 @@ public class OverlayService extends Service {
         return MainActivity.isHideMainWhenTargetForegroundEnabled(this) && targetAppForeground;
     }
 
-    private boolean shouldShowMainOverlayForTargetForeground() {
-        return MainActivity.isShowMainWhenTargetForegroundEnabled(this) && targetAppForeground;
+    private boolean shouldShowMainOverlayForTargetBroadcast() {
+        return MainActivity.isShowMainWhenTargetForegroundEnabled(this) && targetBroadcastActive;
     }
 
     private boolean shouldHideClusterMirrorForInactiveNavigation() {
@@ -1102,6 +1112,43 @@ public class OverlayService extends Service {
         navigationOrCruiseActive = false;
         lastNavigationSignalAt = 0L;
         return true;
+    }
+
+    private boolean updateTargetBroadcastActivity(String action) {
+        if (!isAmapRuntimeBroadcastAction(action)) {
+            return false;
+        }
+        boolean before = targetBroadcastActive;
+        targetBroadcastActive = true;
+        lastTargetBroadcastAt = System.currentTimeMillis();
+        return before != targetBroadcastActive;
+    }
+
+    private boolean expireTargetBroadcastActivityIfNeeded() {
+        if (!targetBroadcastActive || lastTargetBroadcastAt <= 0L) {
+            return false;
+        }
+        if (System.currentTimeMillis() - lastTargetBroadcastAt < TARGET_BROADCAST_ACTIVE_TTL_MS) {
+            return false;
+        }
+        targetBroadcastActive = false;
+        lastTargetBroadcastAt = 0L;
+        return true;
+    }
+
+    private boolean isAmapRuntimeBroadcastAction(String action) {
+        return ACTION_SEND.equals(action)
+                || ACTION_RECV.equals(action)
+                || "AUTO_GUIDE_INFO_FOR_INTERNAL_WIDGET".equals(action)
+                || "AUTO_STATUS_FOR_INTERNAL_WIDGET".equals(action)
+                || (action != null && action.startsWith("com.autonavi.amapauto."));
+    }
+
+    private boolean shouldRequestAmapData() {
+        return MainActivity.isMainOverlayEnabled(this)
+                || MainActivity.isClusterMirrorEnabled(this)
+                || targetBroadcastActive
+                || navigationOrCruiseActive;
     }
 
     private boolean isNavigationActivitySignal(Bundle extras, int keyType, int state) {
@@ -1320,7 +1367,8 @@ public class OverlayService extends Service {
     private void stopSelfIfNoVisuals() {
         if (!MainActivity.isMainOverlayEnabled(this)
                 && !MainActivity.isClusterMirrorEnabled(this)
-                && !MainActivity.isShowMainWhenTargetForegroundEnabled(this)) {
+                && !MainActivity.isShowMainWhenTargetForegroundEnabled(this)
+                && !MainActivity.isKeepBroadcastListenerEnabled(this)) {
             stopSelf();
         }
     }
@@ -1367,7 +1415,13 @@ public class OverlayService extends Service {
         }
         if (MainActivity.ACTION_DISPLAY_POLICY_CHANGED.equals(action)) {
             refreshDisplayPolicies();
+            stopSelfIfNoVisuals();
             return;
+        }
+        boolean targetBroadcastChanged = updateTargetBroadcastActivity(action);
+        if (targetBroadcastChanged) {
+            ensureOverlay();
+            syncMainOverlayAttachment();
         }
         Bundle extras = intent.getExtras();
         Log.d(TAG, "recv action=" + action + " extras=" + describeExtras(extras));
@@ -1376,7 +1430,7 @@ public class OverlayService extends Service {
         }
 
         ensureOverlay();
-        boolean displayPolicyChanged = updateNavigationActivityFromExtras(extras);
+        boolean displayPolicyChanged = targetBroadcastChanged || updateNavigationActivityFromExtras(extras);
         updateModeFromExtras(extras);
         updateTurnFromExtras(extras);
         updateEtaFromExtras(extras);
@@ -1415,6 +1469,7 @@ public class OverlayService extends Service {
             updateLaneFromExtras(extras);
         }
         if (displayPolicyChanged) {
+            syncMainOverlayAttachment();
             ensureClusterMirror();
         }
     }
