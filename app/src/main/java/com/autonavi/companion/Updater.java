@@ -413,5 +413,25 @@ final class Updater {
             }
             return sb.toString();
         }
+
+        String detailMarkdown() {
+            StringBuilder sb = new StringBuilder();
+            sb.append("## 发现新版本\n\n");
+            sb.append("- 当前版本：").append(localVersionName).append(" (").append(localVersionCode).append(")\n");
+            sb.append("- 最新版本：").append(remoteVersionName).append(" (").append(remoteVersionCode).append(")\n");
+            if (size > 0) {
+                sb.append("- APK 大小：").append(size / 1024).append(" KB\n");
+            }
+            if (force) {
+                sb.append("- 强制更新：是\n");
+            }
+            sb.append("\n## 更新日志\n\n");
+            if (!TextUtils.isEmpty(changelog)) {
+                sb.append(changelog);
+            } else {
+                sb.append("暂无");
+            }
+            return sb.toString();
+        }
     }
 }
