@@ -61,7 +61,6 @@ public class OverlayService extends Service {
     private static final long DISPLAY_POLICY_POLL_MS = 1500L;
     private static final long NAVIGATION_ACTIVE_TTL_MS = 12000L;
     private static final long TARGET_BROADCAST_ACTIVE_TTL_MS = 300000L;
-    private static final float MAX_CLUSTER_DASHBOARD_SCALE = 1.15f;
     private static final Pattern CAMERA_LIGHT_PATTERN = Pattern.compile(
             "CameraLightInfo\\{([^}]*)\\}");
 
@@ -410,7 +409,7 @@ public class OverlayService extends Service {
             return;
         }
         float requestedClusterScale = MainActivity.getClusterScale(this);
-        float nextClusterScale = resolveClusterScaleForDisplay(display, requestedClusterScale);
+        float nextClusterScale = requestedClusterScale;
         boolean scaleChanged = Math.abs(nextClusterScale - clusterScale) > 0.001f;
         clusterMirrorRetryCount = 0;
         if (clusterPanel != null && clusterDisplay != null
@@ -500,18 +499,6 @@ public class OverlayService extends Service {
             Log.e(TAG, "cluster mirror add failed", t);
             dismissClusterMirror();
         }
-    }
-
-    private float resolveClusterScaleForDisplay(Display display, float requestedScale) {
-        if (display == null) {
-            return requestedScale;
-        }
-        Point size = new Point();
-        display.getRealSize(size);
-        float maxByHeight = size.y > 0 ? size.y / 1080f : MAX_CLUSTER_DASHBOARD_SCALE;
-        float maxByWidth = size.x > 0 ? size.x / 1920f : MAX_CLUSTER_DASHBOARD_SCALE;
-        float maxScale = Math.max(0.3f, Math.min(MAX_CLUSTER_DASHBOARD_SCALE, Math.min(maxByHeight, maxByWidth)));
-        return Math.min(requestedScale, maxScale);
     }
 
     private boolean canUseOverlayWindowType() {
