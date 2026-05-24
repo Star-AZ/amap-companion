@@ -3293,7 +3293,7 @@ public class OverlayService extends Service {
             boolean showArrowBadge = showDirectionLabel && state.dir >= 0;
             boolean dynamicIsland = MainActivity.isDynamicIslandUiEnabled(this);
             int pillHeight = dynamicIsland ? 36 : 44;
-            int arrowSize = dynamicIsland ? 23 : 28;
+            int arrowSize = dynamicIsland ? 17 : 21;
             view.setMinimumWidth(scaledDp(showArrowBadge ? (dynamicIsland ? 76 : 92) : (dynamicIsland ? 62 : 76), scale));
             view.setMinimumHeight(scaledDp(pillHeight, scale));
             view.setPadding(scaledDp(showArrowBadge ? (dynamicIsland ? 5 : 6) : (dynamicIsland ? 7 : 8), scale),
