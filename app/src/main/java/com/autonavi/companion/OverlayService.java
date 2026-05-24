@@ -3292,24 +3292,26 @@ public class OverlayService extends Service {
             view.setGravity(Gravity.CENTER);
             boolean showArrowBadge = showDirectionLabel && state.dir >= 0;
             boolean dynamicIsland = MainActivity.isDynamicIslandUiEnabled(this);
-            view.setMinimumWidth(scaledDp(showArrowBadge ? (dynamicIsland ? 86 : 104) : (dynamicIsland ? 72 : 88), scale));
-            view.setMinimumHeight(scaledDp(dynamicIsland ? 42 : 50, scale));
-            view.setPadding(scaledDp(showArrowBadge ? (dynamicIsland ? 6 : 7) : (dynamicIsland ? 8 : 10), scale),
-                    scaledDp(dynamicIsland ? 4 : 5, scale),
-                    scaledDp(showArrowBadge ? (dynamicIsland ? 10 : 13) : (dynamicIsland ? 9 : 12), scale),
-                    scaledDp(dynamicIsland ? 4 : 5, scale));
+            int pillHeight = dynamicIsland ? 36 : 44;
+            int arrowSize = dynamicIsland ? 23 : 28;
+            view.setMinimumWidth(scaledDp(showArrowBadge ? (dynamicIsland ? 76 : 92) : (dynamicIsland ? 62 : 76), scale));
+            view.setMinimumHeight(scaledDp(pillHeight, scale));
+            view.setPadding(scaledDp(showArrowBadge ? (dynamicIsland ? 5 : 6) : (dynamicIsland ? 7 : 8), scale),
+                    scaledDp(dynamicIsland ? 3 : 4, scale),
+                    scaledDp(showArrowBadge ? (dynamicIsland ? 8 : 10) : (dynamicIsland ? 8 : 10), scale),
+                    scaledDp(dynamicIsland ? 3 : 4, scale));
 
             GradientDrawable bg = new GradientDrawable();
             bg.setColor(withAlpha(state.color, 92));
-            bg.setCornerRadius(scaledDp(dynamicIsland ? 21 : 25, scale));
+            bg.setCornerRadius(scaledDp(pillHeight / 2, scale));
             bg.setStroke(scaledDp(1, scale), withAlpha(0xFFFFFFFF, 72));
             view.setBackground(bg);
 
             if (showArrowBadge) {
                 View arrow = diyArrowBadge(context, state, scale);
                 LinearLayout.LayoutParams arrowLp = new LinearLayout.LayoutParams(
-                        scaledDp(dynamicIsland ? 28 : 34, scale), scaledDp(dynamicIsland ? 28 : 34, scale));
-                arrowLp.setMargins(0, 0, scaledDp(dynamicIsland ? 6 : 8, scale), 0);
+                        scaledDp(arrowSize, scale), scaledDp(arrowSize, scale));
+                arrowLp.setMargins(0, 0, scaledDp(dynamicIsland ? 5 : 6, scale), 0);
                 view.addView(arrow, arrowLp);
             } else {
                 TextView dot = new TextView(context);
@@ -3319,8 +3321,8 @@ public class OverlayService extends Service {
                 dotBg.setStroke(scaledDp(3, scale), withAlpha(0xFFFFFFFF, 76));
                 dot.setBackground(dotBg);
                 LinearLayout.LayoutParams dotLp = new LinearLayout.LayoutParams(
-                        scaledDp(dynamicIsland ? 28 : 34, scale), scaledDp(dynamicIsland ? 28 : 34, scale));
-                dotLp.setMargins(0, 0, scaledDp(dynamicIsland ? 6 : 9, scale), 0);
+                        scaledDp(arrowSize, scale), scaledDp(arrowSize, scale));
+                dotLp.setMargins(0, 0, scaledDp(dynamicIsland ? 5 : 7, scale), 0);
                 view.addView(dot, dotLp);
             }
 
@@ -3331,16 +3333,16 @@ public class OverlayService extends Service {
             TextView time = new TextView(context);
             time.setText(String.valueOf(seconds));
             time.setTextColor(Color.WHITE);
-            time.setTextSize(scaledSp(dynamicIsland ? 20f : 24f, scale));
+            time.setTextSize(scaledSp(dynamicIsland ? 17f : 21f, scale));
             time.setTypeface(Typeface.DEFAULT_BOLD);
             time.setGravity(Gravity.CENTER);
             textColumn.addView(time, new LinearLayout.LayoutParams(-2, -2));
 
             view.addView(textColumn, new LinearLayout.LayoutParams(-2, -2));
 
-            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, scaledDp(dynamicIsland ? 42 : 50, scale));
-            lp.setMargins(scaledDp(dynamicIsland ? 3 : 4, scale), scaledDp(3, scale),
-                    scaledDp(dynamicIsland ? 3 : 4, scale), scaledDp(3, scale));
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, scaledDp(pillHeight, scale));
+            lp.setMargins(scaledDp(dynamicIsland ? 2 : 3, scale), scaledDp(2, scale),
+                    scaledDp(dynamicIsland ? 2 : 3, scale), scaledDp(2, scale));
             view.setLayoutParams(lp);
             FontManager.applyToViewTree(context, view);
             return view;
