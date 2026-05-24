@@ -32,6 +32,7 @@ public class LaneBarView extends View {
     private boolean cruiseLaneStyle = true;
     private float iconScaleMultiplier = 1f;
     private float frameScaleMultiplier = 1f;
+    private boolean compactSpacing;
 
     public LaneBarView(Context context) {
         super(context);
@@ -98,6 +99,12 @@ public class LaneBarView extends View {
         invalidate();
     }
 
+    public void setCompactSpacing(boolean compact) {
+        compactSpacing = compact;
+        requestLayout();
+        invalidate();
+    }
+
     public void setFallbackIcon(int icon) {
         setLaneData(new int[]{icon, 15, 15, 15}, new boolean[]{true, true, true, true});
     }
@@ -109,8 +116,8 @@ public class LaneBarView extends View {
     @Override
     protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
         int count = Math.max(3, lanes == null ? 4 : lanes.length);
-        int width = dp(48) * count + dp(12);
-        int height = dp(58);
+        int width = dp(compactSpacing ? 40 : 48) * count + dp(compactSpacing ? 8 : 12);
+        int height = dp(compactSpacing ? 50 : 58);
         setMeasuredDimension(resolveSize(width, widthMeasureSpec), resolveSize(height, heightMeasureSpec));
     }
 
@@ -133,14 +140,15 @@ public class LaneBarView extends View {
                 paint.setColor(0x32FFFFFF);
                 paint.setStrokeWidth(dp(1));
                 float x = i * cell;
-                canvas.drawLine(x, dp(8), x, getHeight() - dp(8), paint);
+                canvas.drawLine(x, dp(compactSpacing ? 6 : 8), x, getHeight() - dp(compactSpacing ? 6 : 8), paint);
             }
             boolean laneRecommended = recommend == null || i >= recommend.length || recommend[i];
             LaneIcon icon = iconForLane(lanes[i]);
             if (laneRecommended && icon.hasEnabled()) {
                 paint.setStyle(Paint.Style.FILL);
                 paint.setColor(0x22FFFFFF);
-                rect.set(cell * i + dp(4), dp(5), cell * (i + 1) - dp(4), getHeight() - dp(5));
+                rect.set(cell * i + dp(compactSpacing ? 2 : 4), dp(compactSpacing ? 4 : 5),
+                        cell * (i + 1) - dp(compactSpacing ? 2 : 4), getHeight() - dp(compactSpacing ? 4 : 5));
                 canvas.drawRoundRect(rect, dp(9), dp(9), paint);
             }
             drawLaneIcon(canvas, lanes[i], icon, cell * i, cell, laneRecommended);
@@ -183,9 +191,9 @@ public class LaneBarView extends View {
             return false;
         }
 
-        float iconHeight = Math.min(getHeight() - dp(4), dp(48) * iconScaleMultiplier);
+        float iconHeight = Math.min(getHeight() - dp(4), dp(compactSpacing ? 42 : 48) * iconScaleMultiplier);
         float iconWidth = iconHeight * bitmap.getWidth() / (float) bitmap.getHeight();
-        float maxWidth = width - dp(2);
+        float maxWidth = width - dp(compactSpacing ? 1 : 2);
         if (iconWidth > maxWidth) {
             iconWidth = maxWidth;
             iconHeight = iconWidth * bitmap.getHeight() / (float) bitmap.getWidth();
