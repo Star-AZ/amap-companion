@@ -584,11 +584,6 @@ public class OverlayService extends Service {
         laneBox.setOrientation(LinearLayout.VERTICAL);
         laneBox.setGravity(Gravity.CENTER_HORIZONTAL);
         laneBox.setPadding(scaledDp(8, scale), scaledDp(5, scale), scaledDp(8, scale), scaledDp(7, scale));
-        GradientDrawable laneBg = new GradientDrawable();
-        laneBg.setColor(0xCC0F172A);
-        laneBg.setCornerRadius(scaledDp(10, scale));
-        laneBg.setStroke(scaledDp(1, scale), 0x1FFFFFFF);
-        laneBox.setBackground(laneBg);
         laneBox.setVisibility(View.GONE);
 
         LaneBarView lane = new LaneBarView(context);
@@ -782,7 +777,6 @@ public class OverlayService extends Service {
         laneBox.setOrientation(LinearLayout.VERTICAL);
         laneBox.setGravity(Gravity.CENTER_HORIZONTAL);
         laneBox.setPadding(scaledDp(10, scale), scaledDp(7, scale), scaledDp(10, scale), scaledDp(8, scale));
-        laneBox.setBackground(createSectionBackground(scale));
         laneBox.setVisibility(View.GONE);
         root.addView(laneBox, sectionLp(scale, cluster ? 5f : 8f));
 

@@ -89,6 +89,7 @@ public class MainActivity extends Activity {
     static final String KEY_TEXT_MODE = "text_mode";
     static final String KEY_OVERLAY_UI_STYLE = "overlay_ui_style";
     static final String KEY_AUTO_START_ENABLED = "auto_start_enabled";
+    static final String KEY_START_SERVICE_ON_APP_OPEN = "start_service_on_app_open";
     static final String KEY_SHOW_MAIN_WHEN_TARGET_FOREGROUND = "show_main_when_target_foreground";
     static final String KEY_HIDE_MAIN_WHEN_TARGET_FOREGROUND = "hide_main_when_target_foreground";
     static final String KEY_HIDE_CLUSTER_WHEN_INACTIVE = "hide_cluster_when_inactive";
@@ -149,9 +150,17 @@ public class MainActivity extends Activity {
         persistDefaultUpdateUrl();
         migrateOverlayStylePrefs();
         setContentView(buildContent());
+        autoStartServiceOnAppOpen();
         targetText.postDelayed(() -> {
             checkForUpdates(false);
         }, 2000L);
+    }
+
+    private void autoStartServiceOnAppOpen() {
+        if (!isStartServiceOnAppOpenEnabled(this)) {
+            return;
+        }
+        targetText.postDelayed(() -> startCompanionService(false), 350L);
     }
 
     private ScrollView buildContent() {
@@ -600,7 +609,10 @@ public class MainActivity extends Activity {
         if (isWideLayout()) {
             addTogglePair(grid,
                     behaviorToggle("开机自动启动", KEY_AUTO_START_ENABLED),
-                    behaviorToggle("高德广播自动显示悬浮窗", KEY_SHOW_MAIN_WHEN_TARGET_FOREGROUND));
+                    behaviorToggle("进入软件后自动启动服务", KEY_START_SERVICE_ON_APP_OPEN));
+            addTogglePair(grid,
+                    behaviorToggle("高德广播自动显示悬浮窗", KEY_SHOW_MAIN_WHEN_TARGET_FOREGROUND),
+                    null);
             addTogglePair(grid,
                     behaviorToggle("高德前台隐藏中控悬浮窗", KEY_HIDE_MAIN_WHEN_TARGET_FOREGROUND),
                     null);
@@ -609,6 +621,7 @@ public class MainActivity extends Activity {
                     null);
         } else {
             grid.addView(behaviorToggle("开机自动启动", KEY_AUTO_START_ENABLED));
+            grid.addView(behaviorToggle("进入软件后自动启动服务", KEY_START_SERVICE_ON_APP_OPEN));
             grid.addView(behaviorToggle("高德广播自动显示悬浮窗", KEY_SHOW_MAIN_WHEN_TARGET_FOREGROUND));
             grid.addView(behaviorToggle("高德前台隐藏中控悬浮窗", KEY_HIDE_MAIN_WHEN_TARGET_FOREGROUND));
             grid.addView(behaviorToggle("导航/巡航退出隐藏仪表", KEY_HIDE_CLUSTER_WHEN_INACTIVE));
@@ -787,11 +800,6 @@ public class MainActivity extends Activity {
         previewLaneSection.setOrientation(LinearLayout.VERTICAL);
         previewLaneSection.setGravity(Gravity.CENTER_HORIZONTAL);
         previewLaneSection.setPadding(dp(4), dp(3), dp(4), dp(4));
-        GradientDrawable laneBg = new GradientDrawable();
-        laneBg.setColor(0xCC0F172A);
-        laneBg.setCornerRadius(dp(5));
-        laneBg.setStroke(dp(1), 0x1FFFFFFF);
-        previewLaneSection.setBackground(laneBg);
 
         LaneBarView laneBar = new LaneBarView(this);
         laneBar.setFrameScaleMultiplier(1f);
@@ -1092,16 +1100,24 @@ public class MainActivity extends Activity {
     }
 
     private void startCompanionService() {
+        startCompanionService(true);
+    }
+
+    private void startCompanionService(boolean showToast) {
         if (!isMainOverlayEnabled(this)
                 && !isClusterMirrorEnabled(this)
                 && !isShowMainWhenTargetForegroundEnabled(this)) {
-            Toast.makeText(this, "\u8bf7\u5148\u52fe\u9009\u4e3b\u5c4f\u60ac\u6d6e\u7a97\u3001\u526f\u5c4f\u60ac\u6d6e\u7a97\u6216\u9ad8\u5fb7\u5e7f\u64ad\u81ea\u52a8\u663e\u793a", Toast.LENGTH_LONG).show();
+            if (showToast) {
+                Toast.makeText(this, "\u8bf7\u5148\u52fe\u9009\u4e3b\u5c4f\u60ac\u6d6e\u7a97\u3001\u526f\u5c4f\u60ac\u6d6e\u7a97\u6216\u9ad8\u5fb7\u5e7f\u64ad\u81ea\u52a8\u663e\u793a", Toast.LENGTH_LONG).show();
+            }
             return;
         }
         startOverlayService();
         notifyMainOverlayChanged();
         notifyClusterMirrorChanged();
-        Toast.makeText(this, "\u5df2\u6309\u9009\u9879\u542f\u52a8\u4f34\u4fa3\u670d\u52a1", Toast.LENGTH_SHORT).show();
+        if (showToast) {
+            Toast.makeText(this, "\u5df2\u6309\u9009\u9879\u542f\u52a8\u4f34\u4fa3\u670d\u52a1", Toast.LENGTH_SHORT).show();
+        }
     }
 
     private void stopCompanionService() {
@@ -1785,7 +1801,11 @@ public class MainActivity extends Activity {
                 openUsageAccessSettings();
             }
             if (isChecked) {
-                startOverlayService();
+                if (KEY_START_SERVICE_ON_APP_OPEN.equals(key)) {
+                    startCompanionService(false);
+                } else {
+                    startOverlayService();
+                }
             }
             notifyDisplayPolicyChanged();
             if (!isChecked) {
@@ -2164,6 +2184,10 @@ public class MainActivity extends Activity {
 
     static boolean isAutoStartEnabled(android.content.Context context) {
         return isBehaviorEnabled(context, KEY_AUTO_START_ENABLED);
+    }
+
+    static boolean isStartServiceOnAppOpenEnabled(android.content.Context context) {
+        return isBehaviorEnabled(context, KEY_START_SERVICE_ON_APP_OPEN);
     }
 
     static boolean isHideMainWhenTargetForegroundEnabled(android.content.Context context) {
