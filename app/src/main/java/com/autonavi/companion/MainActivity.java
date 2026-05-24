@@ -107,6 +107,7 @@ public class MainActivity extends Activity {
     static final String DEFAULT_UPDATE_CHANNEL = UPDATE_CHANNEL_SERVER;
     static final String SERVER_UPDATE_URL = "https://amap-companion.zuoqirun.top/update.json";
     static final String GITHUB_UPDATE_URL = "https://amap-companion.zuoqirun.top/update-github.json";
+    static final String HOMEPAGE_URL = "https://amap-companion.zuoqirun.top";
     static final String REPOSITORY_URL = "https://github.com/zuo-qirun/amap-companion";
     static final String LICENSE_URL = "https://github.com/zuo-qirun/amap-companion/blob/master/LICENSE";
     static final String CUSTOM_MAP_SKILL_URL = "https://github.com/zuo-qirun/amap-cruise-wrapper-skill";
@@ -316,6 +317,16 @@ public class MainActivity extends Activity {
         title.setTextColor(0xFF111827);
         section.addView(title, new LinearLayout.LayoutParams(-1, -2));
 
+        TextView homepage = new TextView(this);
+        homepage.setText("\u5b98\u7f51\n" + HOMEPAGE_URL);
+        homepage.setTextSize(13f);
+        homepage.setTextColor(0xFF334155);
+        homepage.setLineSpacing(dp(2), 1.0f);
+        homepage.setTextIsSelectable(true);
+        LinearLayout.LayoutParams homepageLp = new LinearLayout.LayoutParams(-1, -2);
+        homepageLp.setMargins(0, dp(8), 0, 0);
+        section.addView(homepage, homepageLp);
+
         TextView repo = new TextView(this);
         repo.setText("\u5f00\u6e90\u5730\u5740\n" + REPOSITORY_URL);
         repo.setTextSize(13f);
@@ -347,12 +358,13 @@ public class MainActivity extends Activity {
 
         if (isWideLayout()) {
             addButtonPair(section,
-                    button("\u6253\u5f00\u5f00\u6e90\u4ed3\u5e93", v -> openUrl(REPOSITORY_URL), 0xFF1D4ED8),
-                    button("\u67e5\u770b\u8bb8\u53ef\u8bc1", v -> openUrl(LICENSE_URL), 0xFF475569));
+                    button("\u8bbf\u95ee\u5b98\u7f51", v -> openUrl(HOMEPAGE_URL), 0xFF2563EB),
+                    button("\u6253\u5f00\u5f00\u6e90\u4ed3\u5e93", v -> openUrl(REPOSITORY_URL), 0xFF1D4ED8));
             addButtonPair(section,
                     button("\u5b9a\u5236\u5730\u56fe Skill", v -> chooseDownloadSource("\u5b9a\u5236\u5730\u56fe Skill", CUSTOM_MAP_SKILL_URL, CUSTOM_MAP_SKILL_MIRROR_URL), 0xFF0F766E),
                     button("\u4e0b\u8f7d\u5df2\u6539\u9ad8\u5fb7", v -> chooseDownloadSource("\u4e0b\u8f7d\u5df2\u6539\u9ad8\u5fb7", CUSTOM_MAP_APK_URL, CUSTOM_MAP_APK_MIRROR_URL), 0xFFB45309));
         } else {
+            section.addView(button("\u8bbf\u95ee\u5b98\u7f51", v -> openUrl(HOMEPAGE_URL), 0xFF2563EB));
             section.addView(button("\u6253\u5f00\u5f00\u6e90\u4ed3\u5e93", v -> openUrl(REPOSITORY_URL), 0xFF1D4ED8));
             section.addView(button("\u67e5\u770b\u8bb8\u53ef\u8bc1", v -> openUrl(LICENSE_URL), 0xFF475569));
             section.addView(button("\u5b9a\u5236\u5730\u56fe Skill", v -> chooseDownloadSource("\u5b9a\u5236\u5730\u56fe Skill", CUSTOM_MAP_SKILL_URL, CUSTOM_MAP_SKILL_MIRROR_URL), 0xFF0F766E));
