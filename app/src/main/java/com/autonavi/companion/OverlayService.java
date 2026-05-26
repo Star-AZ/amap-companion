@@ -1766,6 +1766,7 @@ public class OverlayService extends Service {
     private void stopSelfIfNoVisuals() {
         if (!MainActivity.isMainOverlayEnabled(this)
                 && !MainActivity.isClusterMirrorEnabled(this)
+                && !MainActivity.isAutoStartEnabled(this)
                 && !MainActivity.isShowMainWhenTargetForegroundEnabled(this)) {
             stopSelf();
         }
@@ -2399,38 +2400,42 @@ public class OverlayService extends Service {
         if (icon > 28) {
             return 0;
         }
-        int id = getResources().getIdentifier("sou" + icon + "_night", "drawable", getPackageName());
+        return souTurnIconResource(icon);
+    }
+
+    private int souTurnIconResource(int icon) {
+        int id = getResources().getIdentifier("sou" + icon + "_night_a530", "drawable", getPackageName());
         if (id != 0) {
             return id;
         }
-        return getResources().getIdentifier("sou" + icon + "_night_a530", "drawable", getPackageName());
+        return getResources().getIdentifier("sou" + icon + "_night", "drawable", getPackageName());
     }
 
     private int fallbackTurnIconResource(int icon) {
         icon = compatibleTurnIcon(icon);
         switch (icon) {
             case 2:
-                return R.drawable.turn_left;
+                return souTurnIconResource(2);
             case 3:
             case 7:
-                return R.drawable.turn_right;
+                return souTurnIconResource(3);
             case 4:
             case 6:
-                return R.drawable.turn_left_front;
+                return souTurnIconResource(4);
             case 5:
-                return R.drawable.turn_right_front;
+                return souTurnIconResource(5);
             case 8:
             case 10:
             case 11:
             case 12:
-                return R.drawable.turn_uturn;
+                return souTurnIconResource(8);
             case 19:
-                return R.drawable.turn_uturn_right;
+                return souTurnIconResource(19);
             case 1:
             case 9:
             case 20:
             default:
-                return R.drawable.turn_straight;
+                return souTurnIconResource(9);
         }
     }
 
@@ -3165,10 +3170,24 @@ public class OverlayService extends Service {
     }
 
     private int normalizeLightDirectionForDisplay(int dir, int status) {
-        if (!inCruiseMode && dir == 0 && isYellowLightStatus(status) && navigationTurnDir >= 0) {
-            return navigationTurnDir;
+        if (!inCruiseMode && dir == 3 && effectiveNavigationTurnDir() == 0) {
+            return 0;
+        }
+        if (!inCruiseMode && dir == 0 && isYellowLightStatus(status)) {
+            int turnDir = effectiveNavigationTurnDir();
+            return turnDir >= 0 ? turnDir : 4;
         }
         return dir;
+    }
+
+    private int effectiveNavigationTurnDir() {
+        if (navigationTurnDir >= 0) {
+            return navigationTurnDir;
+        }
+        if (currentTurnIcon > 0) {
+            return turnIconToTrafficDir(currentTurnIcon);
+        }
+        return -1;
     }
 
     private boolean preferLightState(LightState candidate, LightState old) {
@@ -3391,15 +3410,15 @@ public class OverlayService extends Service {
             return souRes;
         }
         if (dir == 0) {
-            return R.drawable.turn_uturn;
+            return souTurnIconResource(8);
         }
         if (dir == 1 || dir == 5 || dir == 6) {
-            return R.drawable.turn_left;
+            return souTurnIconResource(2);
         }
         if (dir == 2 || dir == 3 || dir == 7 || dir == 8) {
-            return R.drawable.turn_right;
+            return souTurnIconResource(3);
         }
-        return R.drawable.turn_straight;
+        return souTurnIconResource(9);
     }
 
     private int trafficDirToTurnIcon(int dir) {
@@ -3523,10 +3542,10 @@ public class OverlayService extends Service {
         if (icon == 2 || icon == 4 || icon == 6) {
             return 1;
         }
-        if (icon == 3 || icon == 5 || icon == 7 || icon == 19) {
+        if (icon == 3 || icon == 5 || icon == 7) {
             return 2;
         }
-        if (icon == 8 || icon == 10 || icon == 11 || icon == 12) {
+        if (icon == 8 || icon == 10 || icon == 11 || icon == 12 || icon == 19) {
             return 0;
         }
         return 4;

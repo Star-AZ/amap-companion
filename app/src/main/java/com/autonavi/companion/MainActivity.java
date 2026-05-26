@@ -610,7 +610,7 @@ public class MainActivity extends Activity {
         box.addView(title, new LinearLayout.LayoutParams(-1, -2));
 
         TextView hint = new TextView(this);
-        hint.setText("这些选项只控制本程序窗口，不会主动唤醒或启动目标高德应用。高德广播自动显示会在后台持续监听广播；高德前台隐藏才需要“使用情况访问权限”。");
+        hint.setText("这些选项只控制本程序窗口，不会主动唤醒或启动目标高德应用。开机或亮屏自动启动服务开启后，系统重启、应用更新或车机亮屏时会自动启动伴侣服务，相当于打开软件后点击“启动伴侣服务”。高德广播自动显示会在后台持续监听广播。");
         hint.setTextSize(12f);
         hint.setTextColor(0xFF64748B);
         LinearLayout.LayoutParams hintLp = new LinearLayout.LayoutParams(-1, -2);
@@ -625,7 +625,7 @@ public class MainActivity extends Activity {
 
         if (isWideLayout()) {
             addTogglePair(grid,
-                    behaviorToggle("开机自动启动", KEY_AUTO_START_ENABLED),
+                    behaviorToggle("开机或亮屏自动启动服务", KEY_AUTO_START_ENABLED),
                     behaviorToggle("进入软件后自动启动服务", KEY_START_SERVICE_ON_APP_OPEN));
             addTogglePair(grid,
                     behaviorToggle("高德广播自动显示悬浮窗", KEY_SHOW_MAIN_WHEN_TARGET_FOREGROUND),
@@ -637,7 +637,7 @@ public class MainActivity extends Activity {
                     behaviorToggle("导航/巡航退出隐藏仪表", KEY_HIDE_CLUSTER_WHEN_INACTIVE),
                     null);
         } else {
-            grid.addView(behaviorToggle("开机自动启动", KEY_AUTO_START_ENABLED));
+            grid.addView(behaviorToggle("开机或亮屏自动启动服务", KEY_AUTO_START_ENABLED));
             grid.addView(behaviorToggle("进入软件后自动启动服务", KEY_START_SERVICE_ON_APP_OPEN));
             grid.addView(behaviorToggle("高德广播自动显示悬浮窗", KEY_SHOW_MAIN_WHEN_TARGET_FOREGROUND));
             grid.addView(behaviorToggle("高德前台隐藏中控悬浮窗", KEY_HIDE_MAIN_WHEN_TARGET_FOREGROUND));
@@ -2141,6 +2141,7 @@ public class MainActivity extends Activity {
     private void stopServiceIfNoVisuals() {
         if (!isMainOverlayEnabled(this)
                 && !isClusterMirrorEnabled(this)
+                && !isAutoStartEnabled(this)
                 && !isShowMainWhenTargetForegroundEnabled(this)) {
             stopService(new Intent(this, OverlayService.class));
         }
