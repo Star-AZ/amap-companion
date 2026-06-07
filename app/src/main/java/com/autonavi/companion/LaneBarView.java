@@ -7,6 +7,8 @@ import android.graphics.BitmapFactory;
 import android.graphics.DashPathEffect;
 import android.graphics.Paint;
 import android.graphics.Path;
+import android.graphics.PorterDuff;
+import android.graphics.PorterDuffColorFilter;
 import android.graphics.Rect;
 import android.graphics.RectF;
 import android.view.View;
@@ -26,10 +28,13 @@ public class LaneBarView extends View {
 
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final RectF rect = new RectF();
+    private final RectF outlineRect = new RectF();
     private final Rect srcRect = new Rect();
     private final Path path = new Path();
     private final Map<String, Bitmap> iconCache = new HashMap<>();
     private final Map<String, Rect> iconBoundsCache = new HashMap<>();
+    private final PorterDuffColorFilter laneOutlineFilter =
+            new PorterDuffColorFilter(0xE6000000, PorterDuff.Mode.SRC_IN);
     private final Rect commonLaneSourceBounds = new Rect();
     private int[] lanes = new int[]{15, 15, 15, 15};
     private boolean[] recommend = new boolean[]{true, true, true, true};
@@ -270,6 +275,11 @@ public class LaneBarView extends View {
                 if (active != drawActive) {
                     continue;
                 }
+                if (!showBackground) {
+                    paint.setColor(0xE6000000);
+                    paint.setStrokeWidth(active ? dp(7) : dp(6));
+                    drawDirection(canvas, icon.directions[i], left, width);
+                }
                 paint.setColor(active ? 0xFFFFFFFF : 0x88C7D8F4);
                 paint.setStrokeWidth(active ? dp(5) : dp(4));
                 drawDirection(canvas, icon.directions[i], left, width);
@@ -308,7 +318,7 @@ public class LaneBarView extends View {
 
             paint.setFilterBitmap(true);
             paint.setAlpha(255);
-            canvas.drawBitmap(bitmap, null, rect, paint);
+            drawBitmapWithOptionalOutline(canvas, bitmap, null, rect);
             paint.setAlpha(255);
             return true;
         }
@@ -328,9 +338,29 @@ public class LaneBarView extends View {
         paint.setFilterBitmap(true);
         paint.setAlpha(255);
         srcRect.set(source);
-        canvas.drawBitmap(bitmap, srcRect, rect, paint);
+        drawBitmapWithOptionalOutline(canvas, bitmap, srcRect, rect);
         paint.setAlpha(255);
         return true;
+    }
+
+    private void drawBitmapWithOptionalOutline(Canvas canvas, Bitmap bitmap, Rect source, RectF destination) {
+        if (!showBackground) {
+            float stroke = Math.max(1f, dp(1));
+            paint.setColorFilter(laneOutlineFilter);
+            for (int y = -1; y <= 1; y++) {
+                for (int x = -1; x <= 1; x++) {
+                    if (x == 0 && y == 0) {
+                        continue;
+                    }
+                    outlineRect.set(destination);
+                    outlineRect.offset(x * stroke, y * stroke);
+                    canvas.drawBitmap(bitmap, source, outlineRect, paint);
+                }
+            }
+            paint.setColorFilter(null);
+        }
+        canvas.drawBitmap(bitmap, source, destination, paint);
+        paint.setColorFilter(null);
     }
 
     private Rect laneBitmapContentBounds(String resourceName, Bitmap bitmap) {

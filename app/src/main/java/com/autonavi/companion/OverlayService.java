@@ -2483,12 +2483,39 @@ public class OverlayService extends Service {
 
     private void refreshPanelVisibility() {
         if (panel != null) {
+            applyOverlayTextOutlines(panel);
             panel.setVisibility(hasVisibleChildren(panel) ? View.VISIBLE : View.GONE);
             schedulePanelSizeStabilizer(panel, false);
         }
         if (clusterPanel != null) {
+            applyOverlayTextOutlines(clusterPanel);
             clusterPanel.setVisibility(hasVisibleChildren(clusterPanel) ? View.VISIBLE : View.GONE);
             schedulePanelSizeStabilizer(clusterPanel, true);
+        }
+    }
+
+    private void applyOverlayTextOutlines(View view) {
+        if (view == null) {
+            return;
+        }
+        if (view instanceof TextView) {
+            TextView text = (TextView) view;
+            int color = text.getCurrentTextColor();
+            int red = Color.red(color);
+            int green = Color.green(color);
+            int blue = Color.blue(color);
+            int luminance = (red * 299 + green * 587 + blue * 114) / 1000;
+            int outline = luminance >= 150 ? 0xE6000000 : 0xE6FFFFFF;
+            float density = text.getResources().getDisplayMetrics().density;
+            float radius = Math.max(1.2f * density,
+                    Math.min(2.4f * density, text.getTextSize() * 0.055f));
+            text.setShadowLayer(radius, 0f, 0f, outline);
+        }
+        if (view instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) view;
+            for (int i = 0; i < group.getChildCount(); i++) {
+                applyOverlayTextOutlines(group.getChildAt(i));
+            }
         }
     }
 
@@ -2994,6 +3021,8 @@ public class OverlayService extends Service {
         if (clusterDetailText != null) {
             clusterDetailText.setTextColor(detail);
         }
+        applyOverlayTextOutlines(panel);
+        applyOverlayTextOutlines(clusterPanel);
     }
 
     private void applyEdogAlertTextColor(LinearLayout row, int primary) {
