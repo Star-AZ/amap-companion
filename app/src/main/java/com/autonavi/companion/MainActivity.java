@@ -15,8 +15,10 @@ import android.content.pm.ResolveInfo;
 import android.hardware.display.DisplayManager;
 import android.graphics.Color;
 import android.graphics.Typeface;
+import android.graphics.drawable.ClipDrawable;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.LayerDrawable;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -193,9 +195,9 @@ public class MainActivity extends Activity {
 
         LinearLayout settings = card(Color.WHITE);
         rightColumn.addView(settings, new LinearLayout.LayoutParams(-1, -2));
+        addOverlayTargetControls(settings);
         addOverlayScaleControls(settings);
         addClusterMirrorControls(settings);
-        addOverlayTargetControls(settings);
         addOverlayContentControls(settings);
         addBehaviorControls(settings);
         addOpenSourceSection(wideLayout ? leftColumn : rightColumn, wideLayout);
@@ -334,9 +336,8 @@ public class MainActivity extends Activity {
         overlayScaleText.setTextColor(0xFF111827);
         overlayScaleText.setTypeface(Typeface.DEFAULT_BOLD);
         box.addView(overlayScaleText, new LinearLayout.LayoutParams(-1, -2));
-        addOverlayPreview(box);
 
-        SeekBar seekBar = new SeekBar(this);
+        SeekBar seekBar = scaleSeekBar();
         seekBar.setMax(AppPrefs.MAX_OVERLAY_SCALE_PERCENT - AppPrefs.MIN_OVERLAY_SCALE_PERCENT);
         seekBar.setProgress(AppPrefs.getOverlayScalePercent(this) - AppPrefs.MIN_OVERLAY_SCALE_PERCENT);
         seekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
@@ -346,6 +347,7 @@ public class MainActivity extends Activity {
                 updateOverlayScaleText(percent);
                 if (fromUser) {
                     saveOverlayScalePercent(percent);
+                    notifyOverlayScaleChanged();
                 }
             }
 
@@ -358,11 +360,11 @@ public class MainActivity extends Activity {
                 int percent = AppPrefs.MIN_OVERLAY_SCALE_PERCENT + bar.getProgress();
                 saveOverlayScalePercent(percent);
                 updateOverlayScaleText(percent);
+                notifyOverlayScaleChanged();
             }
         });
         box.addView(seekBar, new LinearLayout.LayoutParams(-1, -2));
         updateOverlayScaleText(AppPrefs.getOverlayScalePercent(this));
-        box.addView(button("\u5e94\u7528\u5f53\u524d\u5927\u5c0f\u5230\u60ac\u6d6e\u7a97", v -> notifyOverlayScaleChanged(), 0xFF334155));
 
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
         lp.setMargins(0, dp(10), 0, 0);
@@ -394,11 +396,12 @@ public class MainActivity extends Activity {
         clusterScaleText = new TextView(this);
         clusterScaleText.setTextSize(13f);
         clusterScaleText.setTextColor(0xFF334155);
+        clusterScaleText.setTypeface(Typeface.DEFAULT_BOLD);
         LinearLayout.LayoutParams scaleTextLp = new LinearLayout.LayoutParams(-1, -2);
-        scaleTextLp.setMargins(0, dp(8), 0, 0);
+        scaleTextLp.setMargins(0, dp(6), 0, 0);
         box.addView(clusterScaleText, scaleTextLp);
 
-        SeekBar seekBar = new SeekBar(this);
+        SeekBar seekBar = scaleSeekBar();
         seekBar.setMax(AppPrefs.MAX_OVERLAY_SCALE_PERCENT - AppPrefs.MIN_OVERLAY_SCALE_PERCENT);
         seekBar.setProgress(AppPrefs.getClusterScalePercent(this) - AppPrefs.MIN_OVERLAY_SCALE_PERCENT);
         seekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
@@ -427,21 +430,21 @@ public class MainActivity extends Activity {
         box.addView(seekBar, new LinearLayout.LayoutParams(-1, -2));
         updateClusterScaleText(AppPrefs.getClusterScalePercent(this));
 
-        LinearLayout upRow = new LinearLayout(this);
-        upRow.setGravity(Gravity.CENTER);
-        upRow.addView(directionButton("\u4e0a", v -> moveClusterBy(0, -dp(16))));
-        box.addView(upRow, new LinearLayout.LayoutParams(-1, -2));
+        ClusterJoystickView joystick = new ClusterJoystickView(this);
+        joystick.setOnMoveListener((dx, dy) -> moveClusterBy(dx, dy));
+        LinearLayout.LayoutParams joystickLp = new LinearLayout.LayoutParams(dp(148), dp(148));
+        joystickLp.gravity = Gravity.CENTER_HORIZONTAL;
+        joystickLp.setMargins(0, dp(12), 0, 0);
+        box.addView(joystick, joystickLp);
 
-        LinearLayout middleRow = new LinearLayout(this);
-        middleRow.setGravity(Gravity.CENTER);
-        middleRow.addView(directionButton("\u5de6", v -> moveClusterBy(-dp(16), 0)));
-        middleRow.addView(directionButton("\u53f3", v -> moveClusterBy(dp(16), 0)));
-        box.addView(middleRow, new LinearLayout.LayoutParams(-1, -2));
-
-        LinearLayout downRow = new LinearLayout(this);
-        downRow.setGravity(Gravity.CENTER);
-        downRow.addView(directionButton("\u4e0b", v -> moveClusterBy(0, dp(16))));
-        box.addView(downRow, new LinearLayout.LayoutParams(-1, -2));
+        TextView joystickLabel = new TextView(this);
+        joystickLabel.setText("\u526f\u5c4f\u60ac\u6d6e\u7a97\u8c03\u8282\u73af");
+        joystickLabel.setTextSize(12f);
+        joystickLabel.setTextColor(0xFF475569);
+        joystickLabel.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams joystickLabelLp = new LinearLayout.LayoutParams(-1, -2);
+        joystickLabelLp.setMargins(0, dp(5), 0, 0);
+        box.addView(joystickLabel, joystickLabelLp);
 
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
         lp.setMargins(0, dp(8), 0, 0);
@@ -516,20 +519,26 @@ public class MainActivity extends Activity {
                     contentToggle("\u7ea2\u7eff\u706f\u5012\u8ba1\u65f6", AppPrefs.KEY_SHOW_LIGHT),
                     contentToggle("\u8f66\u9053\u4fe1\u606f", AppPrefs.KEY_SHOW_LANE));
             addTogglePair(grid,
-                    contentToggle("\u5269\u4f59\u91cc\u7a0b\u4e0e\u76ee\u7684\u5730", AppPrefs.KEY_SHOW_ETA),
-                    contentToggle("\u9650\u901f/\u7535\u5b50\u773c/\u7ea2\u7eff\u706f\u4e2a\u6570", AppPrefs.KEY_SHOW_ALERT));
+                    contentToggle("\u5269\u4f59\u91cc\u7a0b/\u65f6\u95f4/\u5230\u8fbe\u65f6\u95f4", AppPrefs.KEY_SHOW_ETA),
+                    contentToggle("\u76ee\u7684\u5730\u5730\u70b9", AppPrefs.KEY_SHOW_DESTINATION));
+            addTogglePair(grid,
+                    contentToggle("\u9650\u901f/\u7535\u5b50\u773c/\u7ea2\u7eff\u706f\u4e2a\u6570", AppPrefs.KEY_SHOW_ALERT),
+                    null);
             addTogglePair(grid,
                     contentToggle("\u7ecf\u5178UI\u670d\u52a1\u533a\u4fe1\u606f", AppPrefs.KEY_SHOW_SERVICE_AREA),
                     contentToggle("\u8be6\u7ec6\u72b6\u6001", AppPrefs.KEY_SHOW_DETAIL));
+            addOverspeedBehaviorControls(grid);
         } else {
             grid.addView(contentToggle("\u9876\u90e8\u72b6\u6001", AppPrefs.KEY_SHOW_MODE));
             grid.addView(contentToggle("\u8def\u7ebf\u6307\u5f15", AppPrefs.KEY_SHOW_TURN));
             grid.addView(contentToggle("\u7ea2\u7eff\u706f\u5012\u8ba1\u65f6", AppPrefs.KEY_SHOW_LIGHT));
             grid.addView(contentToggle("\u8f66\u9053\u4fe1\u606f", AppPrefs.KEY_SHOW_LANE));
-            grid.addView(contentToggle("\u5269\u4f59\u91cc\u7a0b\u4e0e\u76ee\u7684\u5730", AppPrefs.KEY_SHOW_ETA));
+            grid.addView(contentToggle("\u5269\u4f59\u91cc\u7a0b/\u65f6\u95f4/\u5230\u8fbe\u65f6\u95f4", AppPrefs.KEY_SHOW_ETA));
+            grid.addView(contentToggle("\u76ee\u7684\u5730\u5730\u70b9", AppPrefs.KEY_SHOW_DESTINATION));
             grid.addView(contentToggle("\u9650\u901f/\u7535\u5b50\u773c/\u7ea2\u7eff\u706f\u4e2a\u6570", AppPrefs.KEY_SHOW_ALERT));
             grid.addView(contentToggle("\u7ecf\u5178UI\u670d\u52a1\u533a\u4fe1\u606f", AppPrefs.KEY_SHOW_SERVICE_AREA));
             grid.addView(contentToggle("\u8be6\u7ec6\u72b6\u6001", AppPrefs.KEY_SHOW_DETAIL));
+            addOverspeedBehaviorControls(grid);
         }
         addBackgroundOpacityControls(box);
         overlayUiStyleButton = button(overlayUiStyleButtonText(), v -> chooseOverlayUiStyle(), 0xFF334155);
@@ -600,9 +609,6 @@ public class MainActivity extends Activity {
             grid.addView(behaviorToggle("高德前台隐藏中控悬浮窗", AppPrefs.KEY_HIDE_MAIN_WHEN_TARGET_FOREGROUND));
             grid.addView(behaviorToggle("导航/巡航退出隐藏仪表", AppPrefs.KEY_HIDE_CLUSTER_WHEN_INACTIVE));
         }
-
-        addOverspeedBehaviorControls(grid);
-
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
         lp.setMargins(0, dp(8), 0, 0);
         parent.addView(box, lp);
@@ -620,14 +626,43 @@ public class MainActivity extends Activity {
     }
 
     private void addBackgroundOpacityControls(LinearLayout parent) {
+        LinearLayout palette = new LinearLayout(this);
+        palette.setOrientation(LinearLayout.HORIZONTAL);
+        palette.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout.LayoutParams paletteLp = new LinearLayout.LayoutParams(-1, -2);
+        paletteLp.setMargins(0, dp(8), 0, 0);
+        parent.addView(palette, paletteLp);
+
+        View[] swatches = new View[AppPrefs.BACKGROUND_COLOR_PRESETS.length];
+        for (int i = 0; i < AppPrefs.BACKGROUND_COLOR_PRESETS.length; i++) {
+            final int color = AppPrefs.BACKGROUND_COLOR_PRESETS[i];
+            View swatch = new View(this);
+            swatch.setContentDescription("\u4e3b\u80cc\u666f\u8272");
+            LinearLayout.LayoutParams swatchLp = new LinearLayout.LayoutParams(dp(30), dp(30));
+            swatchLp.setMargins(i == 0 ? 0 : dp(7), 0, 0, 0);
+            palette.addView(swatch, swatchLp);
+            swatches[i] = swatch;
+            swatch.setOnClickListener(v -> {
+                saveBackgroundColor(color);
+                updateBackgroundColorSwatches(swatches);
+                applyOverlayPreviewStyle();
+                notifyOverlayStyleChanged();
+            });
+        }
+        updateBackgroundColorSwatches(swatches);
+
         overlayBackgroundOpacityText = new TextView(this);
         overlayBackgroundOpacityText.setTextSize(13f);
         overlayBackgroundOpacityText.setTextColor(0xFF334155);
+        overlayBackgroundOpacityText.setTypeface(Typeface.DEFAULT_BOLD);
         LinearLayout.LayoutParams textLp = new LinearLayout.LayoutParams(-1, -2);
-        textLp.setMargins(0, dp(8), 0, 0);
+        textLp.setMargins(0, dp(4), 0, 0);
         parent.addView(overlayBackgroundOpacityText, textLp);
 
-        SeekBar seekBar = new SeekBar(this);
+        SeekBar seekBar = scaleSeekBar();
+        seekBar.setPadding(dp(8), dp(2), dp(8), dp(8));
+        seekBar.setMinimumHeight(dp(40));
+        seekBar.setMinHeight(dp(40));
         seekBar.setMax(AppPrefs.MAX_BACKGROUND_OPACITY_PERCENT - AppPrefs.MIN_BACKGROUND_OPACITY_PERCENT);
         seekBar.setProgress(AppPrefs.getBackgroundOpacityPercent(this) - AppPrefs.MIN_BACKGROUND_OPACITY_PERCENT);
         seekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
@@ -657,6 +692,28 @@ public class MainActivity extends Activity {
         });
         parent.addView(seekBar, new LinearLayout.LayoutParams(-1, -2));
         updateBackgroundOpacityText(AppPrefs.getBackgroundOpacityPercent(this));
+    }
+
+    private void updateBackgroundColorSwatches(View[] swatches) {
+        int selected = AppPrefs.getBackgroundColor(this);
+        for (int i = 0; i < swatches.length; i++) {
+            int color = AppPrefs.BACKGROUND_COLOR_PRESETS[i];
+            boolean active = color == selected;
+            GradientDrawable bg = new GradientDrawable();
+            bg.setShape(GradientDrawable.RECTANGLE);
+            bg.setCornerRadius(dp(8));
+            bg.setColor(color);
+            bg.setStroke(dp(active ? 3 : 1), active ? 0xFF38BDF8 : 0x99CBD5E1);
+            swatches[i].setBackground(bg);
+            swatches[i].setSelected(active);
+        }
+    }
+
+    private void saveBackgroundColor(int color) {
+        getSharedPreferences(AppPrefs.PREFS, MODE_PRIVATE)
+                .edit()
+                .putInt(AppPrefs.KEY_BACKGROUND_COLOR, AppPrefs.normalizeBackgroundColor(color))
+                .apply();
     }
 
     private void addOverlayPreview(LinearLayout parent) {
@@ -902,12 +959,50 @@ public class MainActivity extends Activity {
         return b;
     }
 
-    private Button directionButton(String text, android.view.View.OnClickListener listener) {
-        Button b = button(text, listener, 0xFF475569);
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(86), dp(42));
-        lp.setMargins(dp(5), dp(6), dp(5), 0);
-        b.setLayoutParams(lp);
-        return b;
+    private SeekBar scaleSeekBar() {
+        SeekBar seekBar = new SeekBar(this);
+        seekBar.setPadding(dp(8), dp(2), dp(8), dp(8));
+        seekBar.setMinimumHeight(dp(40));
+        seekBar.setMinHeight(dp(40));
+
+        GradientDrawable track = new GradientDrawable();
+        track.setColor(0xFFE2E8F0);
+        track.setCornerRadius(dp(5));
+        track.setSize(1, dp(10));
+
+        GradientDrawable secondary = new GradientDrawable();
+        secondary.setColor(0xFFC4D1E3);
+        secondary.setCornerRadius(dp(5));
+        secondary.setSize(1, dp(10));
+
+        GradientDrawable progress = new GradientDrawable(
+                GradientDrawable.Orientation.LEFT_RIGHT,
+                new int[]{0xFF2563EB, 0xFF06B6D4});
+        progress.setCornerRadius(dp(5));
+        progress.setSize(1, dp(10));
+
+        LayerDrawable progressDrawable = new LayerDrawable(new Drawable[]{
+                track,
+                new ClipDrawable(secondary, Gravity.LEFT, ClipDrawable.HORIZONTAL),
+                new ClipDrawable(progress, Gravity.LEFT, ClipDrawable.HORIZONTAL)
+        });
+        progressDrawable.setId(0, android.R.id.background);
+        progressDrawable.setId(1, android.R.id.secondaryProgress);
+        progressDrawable.setId(2, android.R.id.progress);
+        progressDrawable.setLayerInset(0, 0, dp(19), 0, dp(19));
+        progressDrawable.setLayerInset(1, 0, dp(19), 0, dp(19));
+        progressDrawable.setLayerInset(2, 0, dp(19), 0, dp(19));
+        seekBar.setProgressDrawable(progressDrawable);
+
+        GradientDrawable thumb = new GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM,
+                new int[]{0xFFF8FAFC, 0xFF38BDF8, 0xFF1D4ED8});
+        thumb.setShape(GradientDrawable.OVAL);
+        thumb.setSize(dp(30), dp(30));
+        thumb.setStroke(dp(2), 0xFFE0F2FE);
+        seekBar.setThumb(thumb);
+        seekBar.setThumbOffset(dp(15));
+        return seekBar;
     }
 
     private void addButtonPair(LinearLayout parent, Button left, Button right) {
@@ -1740,16 +1835,20 @@ public class MainActivity extends Activity {
     }
 
     private void updateOverlayPreviewContentVisibility() {
+        updatePreviewEtaText();
         setPreviewVisibility(previewModeText, AppPrefs.isOverlayContentEnabled(this, AppPrefs.KEY_SHOW_MODE));
         setPreviewVisibility(previewTurnText, AppPrefs.isOverlayContentEnabled(this, AppPrefs.KEY_SHOW_TURN));
         setPreviewVisibility(previewLightRow, AppPrefs.isOverlayContentEnabled(this, AppPrefs.KEY_SHOW_LIGHT));
         setPreviewVisibility(previewLaneSection, AppPrefs.isOverlayContentEnabled(this, AppPrefs.KEY_SHOW_LANE));
-        setPreviewVisibility(previewEtaText, AppPrefs.isOverlayContentEnabled(this, AppPrefs.KEY_SHOW_ETA));
+        setPreviewVisibility(previewEtaText,
+                AppPrefs.isOverlayContentEnabled(this, AppPrefs.KEY_SHOW_ETA)
+                        || AppPrefs.shouldShowDestination(this));
         setPreviewVisibility(previewAlertText, AppPrefs.isOverlayContentEnabled(this, AppPrefs.KEY_SHOW_ALERT));
         setPreviewVisibility(previewDetailText, AppPrefs.isOverlayContentEnabled(this, AppPrefs.KEY_SHOW_DETAIL));
     }
 
     private void applyOverlayPreviewStyle() {
+        updateOverlayPreviewContentVisibility();
         applyOverlayPreviewPanelStyle();
         applyOverlayPreviewTextStyle();
         if (overlayUiStyleButton != null) {
@@ -1759,6 +1858,23 @@ public class MainActivity extends Activity {
             overlayTextModeButton.setText(textModeButtonText());
         }
         updateBackgroundOpacityText(AppPrefs.getBackgroundOpacityPercent(this));
+    }
+
+    private void updatePreviewEtaText() {
+        if (previewEtaText == null) {
+            return;
+        }
+        StringBuilder text = new StringBuilder();
+        if (AppPrefs.isOverlayContentEnabled(this, AppPrefs.KEY_SHOW_ETA)) {
+            text.append("5.3\u516c\u91cc \u00b7 10\u5206\u949f\n\u9884\u8ba105:42\u5230\u8fbe");
+        }
+        if (AppPrefs.shouldShowDestination(this)) {
+            if (text.length() > 0) {
+                text.append('\n');
+            }
+            text.append("\u76ee\u7684\u5730 \u5c0f\u7ea2\u95e8\u4e61\u515a\u7fa4\u670d\u52a1\u4e2d\u5fc3");
+        }
+        previewEtaText.setText(text.toString());
     }
 
     private void applyOverlayPreviewPanelStyle() {
@@ -1789,7 +1905,7 @@ public class MainActivity extends Activity {
         GradientDrawable bg = new GradientDrawable();
         bg.setCornerRadius(dp(7));
         int opacity = AppPrefs.getBackgroundOpacityPercent(this);
-        bg.setColor(AppPrefs.withAlpha(0xFF111827, opacity));
+        bg.setColor(AppPrefs.withAlpha(AppPrefs.getBackgroundColor(this), opacity));
         bg.setStroke(dp(1), AppPrefs.withAlpha(0xFFFFFFFF, AppPrefs.strokeOpacityForBackground(opacity)));
         return bg;
     }
@@ -1969,7 +2085,7 @@ public class MainActivity extends Activity {
 
     private void updateClusterScaleText(int percent) {
         if (clusterScaleText != null) {
-            clusterScaleText.setText("\u526f\u5c4f\u5927\u5c0f " + AppPrefs.clampOverlayScalePercent(percent) + "%");
+            clusterScaleText.setText("\u526f\u5c4f\u60ac\u6d6e\u7a97\u5927\u5c0f " + AppPrefs.clampOverlayScalePercent(percent) + "%");
         }
     }
 

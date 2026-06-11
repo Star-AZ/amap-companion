@@ -15,6 +15,7 @@ import android.hardware.display.DisplayManager;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Color;
+import android.graphics.Paint;
 import android.graphics.PixelFormat;
 import android.graphics.Point;
 import android.graphics.Typeface;
@@ -26,7 +27,10 @@ import android.os.Environment;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
+import android.text.SpannableString;
+import android.text.Spanned;
 import android.text.TextUtils;
+import android.text.style.RelativeSizeSpan;
 import android.util.Log;
 import android.view.Gravity;
 import android.view.Display;
@@ -70,7 +74,8 @@ public class OverlayService extends Service {
     private static final long DISPLAY_POLICY_POLL_MS = 1500L;
     private static final long NAVIGATION_ACTIVE_TTL_MS = 12000L;
     private static final long TARGET_BROADCAST_ACTIVE_TTL_MS = 15000L;
-    private static final long PANEL_WIDTH_SHRINK_DELAY_MS = 2500L;
+    private static final long PANEL_WIDTH_SHRINK_DELAY_MS = 10000L;
+    private static final long TMC_TTL_MS = 12000L;
     private static final long FULL_MODE_TURN_MS = 10000L;
     private static final long FULL_MODE_ETA_MS = 5000L;
     private static final long OVERSPEED_BLINK_MS = 5000L;
@@ -202,9 +207,11 @@ public class OverlayService extends Service {
     private String currentRoadName = "";
     private String currentHeadingSummary = "";
     private String currentRoadTypeSummary = "";
+    private int currentRoadType = -1; // 0=高速 6=快速路, for exit-info gating
     private String currentTurnLead = "";
     private String currentTurnRoad = "";
     private String currentTurnDistance = "";
+    private int currentTurnDistanceMeters = -1;
     private int currentTurnIcon = 0;
     private int currentLimitSpeed = -1;
     // Overspeed warning (all UI styles)
@@ -219,6 +226,32 @@ public class OverlayService extends Service {
     private GradientDrawable clusterPanelBackground;
     private long alertUpdatedAt;
     private int navigationTurnDir = -1;
+    private Runnable turnBlink;
+    private boolean turnBlinkOn;
+    private final java.util.Set<Integer> breathingLightKeys = new java.util.HashSet<>();
+    // Exit/entrance info. Navi-Link reads EXIT_NAME_INFO / EXIT_DIRECTION_INFO from 10001.
+    private int exitNameNum = -1;
+    private String exitDirection = "";
+    private String exitLabel = "";
+    private boolean routeGuidanceExitSupported;
+    private String routeGuidanceExitLabel = "";
+    private long exitDistance = -1;
+    private long exitTime = -1;
+    private int exitResultState = -1;
+    // Exit-number overlay TextViews (one per arrow position)
+    private TextView navExitText;
+    private TextView clusterNavExitText;
+    private TextView turnExitText;
+    private TextView clusterTurnExitText;
+    private TextView turnLeadExitText;
+    private TextView clusterTurnLeadExitText;
+    // Exit alternator animation
+    private Runnable exitArrowTick;
+    private long exitAlternatorStartMs;
+    private boolean exitAlternatorActive;
+    private Runnable exitStopPending; // debounce road-type flapping
+    private static final int EXIT_LABEL_COLOR = 0xFFFFAA33;
+
     private Runnable mainPanelWidthUnlock;
     private Runnable clusterPanelWidthUnlock;
     private int mainPanelBaseMinWidth = -1;
@@ -229,6 +262,16 @@ public class OverlayService extends Service {
     private int clusterPanelHeldMinWidth;
     private int mainPanelHeldMinHeight;
     private int clusterPanelHeldMinHeight;
+    private TmcProgressBar mainTmcProgressBar;
+    private TmcProgressBar clusterTmcProgressBar;
+    private String cachedTmcJson = "";
+    private long tmcUpdatedAt;
+    private int cachedEdogSpeed = -1;
+    private int cachedCameraIndex = -1;
+    private int cachedCameraDist = -1;
+    private int cachedCameraType = -1;
+    private int cachedLightNum = -1;
+    private long cachedEdogUpdatedAt;
     private int[] lastLaneData;
     private boolean[] lastLaneAdvised;
     private float overlayScale = 2f;
@@ -250,6 +293,7 @@ public class OverlayService extends Service {
             if (shouldRequestAmapData()) {
                 requestLaneInfo();
                 requestTrafficLightInfo();
+                requestTmcInfo();
             }
             mainHandler.postDelayed(this, 6000L);
         }
@@ -268,6 +312,15 @@ public class OverlayService extends Service {
         @Override
         public void run() {
             renderTrafficLights();
+        }
+    };
+
+    private final Runnable tmcClear = new Runnable() {
+        @Override
+        public void run() {
+            if (System.currentTimeMillis() - tmcUpdatedAt >= TMC_TTL_MS) {
+                clearTmcData();
+            }
         }
     };
 
@@ -294,6 +347,8 @@ public class OverlayService extends Service {
         stopSelfIfNoVisuals();
         if (shouldRequestAmapData()) {
             requestLaneInfo();
+            requestExitInfo();
+            requestTmcInfo();
         }
         mainHandler.postDelayed(lanePoll, 6000L);
         mainHandler.post(displayPolicyPoll);
@@ -320,6 +375,9 @@ public class OverlayService extends Service {
         }
         if (shouldRequestAmapData()) {
             requestLaneInfo();
+            requestTrafficLightInfo();
+            requestExitInfo();
+            requestTmcInfo();
         }
         return START_STICKY;
     }
@@ -342,6 +400,22 @@ public class OverlayService extends Service {
         clusterPanelWidthUnlock = null;
         overspeedBlinks = null;
         fullModeAlternator = null;
+        turnBlink = null;
+        exitArrowTick = null;
+        exitStopPending = null;
+        exitAlternatorActive = false;
+        mainTmcProgressBar = null;
+        clusterTmcProgressBar = null;
+        cachedTmcJson = "";
+        tmcUpdatedAt = 0L;
+        clearEdogCache();
+        navExitText = null;
+        clusterNavExitText = null;
+        turnExitText = null;
+        clusterTurnExitText = null;
+        turnLeadExitText = null;
+        clusterTurnLeadExitText = null;
+        breathingLightKeys.clear();
         dismissClusterMirror();
         if (windowManager != null && panel != null && panel.getParent() != null) {
             try {
@@ -710,7 +784,7 @@ public class OverlayService extends Service {
         card.setPadding(padH, padTop, padH, padBottom);
         GradientDrawable bg = new GradientDrawable();
         int opacity = AppPrefs.getBackgroundOpacityPercent(this);
-        bg.setColor(withAlpha(0xFF111827, opacity));
+        bg.setColor(withAlpha(AppPrefs.getBackgroundColor(this), opacity));
         bg.setCornerRadius(scaledDp(12, scale));
         bg.setStroke(scaledDp(1, scale), withAlpha(0xFFFFFFFF, AppPrefs.strokeOpacityForBackground(opacity)));
         card.setBackground(bg);
@@ -739,7 +813,7 @@ public class OverlayService extends Service {
         // Replace cruise edog placeholder
         LinearLayout cruiseEdogPlaceholder = (LinearLayout) card.findViewById(R.id.card_cruise_edog_row);
         cruiseEdogPlaceholder.removeAllViews();
-        LinearLayout cruiseEdog = buildEdogAlertRow(context, scale, 19);
+        LinearLayout cruiseEdog = buildEdogAlertRow(context, scale);
         cruiseEdog.setVisibility(View.VISIBLE);
         cruiseEdogPlaceholder.addView(cruiseEdog, new LinearLayout.LayoutParams(-2, -2));
 
@@ -766,6 +840,11 @@ public class OverlayService extends Service {
         LinearLayout.LayoutParams iconLp = (LinearLayout.LayoutParams) navIcon.getLayoutParams();
         iconLp.width = iconSize;
         iconLp.height = iconSize;
+        if (cluster) {
+            clusterNavExitText = wrapArrowWithExitOverlay(navIcon, scale);
+        } else {
+            navExitText = wrapArrowWithExitOverlay(navIcon, scale);
+        }
 
         TextView navDist = (TextView) card.findViewById(R.id.nav_turn_dist);
         navDist.setTextColor(primaryTextColor());
@@ -803,7 +882,7 @@ public class OverlayService extends Service {
         // Replace nav edog placeholder
         LinearLayout navEdogPlaceholder = (LinearLayout) card.findViewById(R.id.card_nav_edog_row);
         navEdogPlaceholder.removeAllViews();
-        LinearLayout navEdog = buildEdogAlertRow(context, scale, 19);
+        LinearLayout navEdog = buildEdogAlertRow(context, scale);
         navEdog.setVisibility(View.VISIBLE);
         navEdogPlaceholder.addView(navEdog, new LinearLayout.LayoutParams(-2, -2));
 
@@ -917,6 +996,11 @@ public class OverlayService extends Service {
         LinearLayout.LayoutParams turnIconLp = new LinearLayout.LayoutParams(scaledDp(30, scale), scaledDp(30, scale));
         turnIconLp.setMargins(0, 0, scaledDp(7, scale), 0);
         turnDetailRow.addView(turnIcon, turnIconLp);
+        if (cluster) {
+            clusterTurnExitText = wrapArrowWithExitOverlay(turnIcon, scale);
+        } else {
+            turnExitText = wrapArrowWithExitOverlay(turnIcon, scale);
+        }
 
         TextView turnDistance = new TextView(context);
         turnDistance.setTextColor(Color.WHITE);
@@ -1075,6 +1159,11 @@ public class OverlayService extends Service {
         turnIconLp.width = scaledDp(30, scale);
         turnIconLp.height = scaledDp(30, scale);
         turnIconLp.setMargins(0, 0, scaledDp(7, scale), 0);
+        if (cluster) {
+            clusterTurnExitText = wrapArrowWithExitOverlay(turnIcon, scale);
+        } else {
+            turnExitText = wrapArrowWithExitOverlay(turnIcon, scale);
+        }
 
         TextView turnDistance = (TextView) root.findViewById(R.id.turn_distance);
         turnDistance.setTextSize(scaledSp(22f, scale));
@@ -1175,8 +1264,8 @@ public class OverlayService extends Service {
         LinearLayout root = (LinearLayout) LayoutInflater.from(context).inflate(R.layout.panel_dashboard, null);
 
         // Dynamic scaling
-        root.setPadding(scaledDp(cluster ? 12 : 14, scale), scaledDp(cluster ? 8 : 10, scale),
-                scaledDp(cluster ? 12 : 14, scale), scaledDp(cluster ? 8 : 10, scale));
+        root.setPadding(scaledDp(cluster ? 8 : 10, scale), scaledDp(cluster ? 7 : 9, scale),
+                scaledDp(cluster ? 8 : 10, scale), scaledDp(cluster ? 7 : 9, scale));
         root.setMinimumWidth(scaledDp(cluster ? 300 : 314, scale));
         root.setBackground(cluster ? createClusterPanelBackground() : createMainPanelBackground());
 
@@ -1197,7 +1286,7 @@ public class OverlayService extends Service {
         TextView mode = (TextView) root.findViewById(R.id.mode_text);
         mode.setTextSize(scaledSp(13f, scale));
         LinearLayout.LayoutParams modeLp = (LinearLayout.LayoutParams) mode.getLayoutParams();
-        modeLp.leftMargin = scaledDp(12, scale);
+        modeLp.leftMargin = scaledDp(8, scale);
 
         TextView title = (TextView) root.findViewById(R.id.title_text);
         title.setTextSize(scaledSp(cluster ? 24f : 26f, scale));
@@ -1213,7 +1302,7 @@ public class OverlayService extends Service {
 
         LinearLayout summary = (LinearLayout) root.findViewById(R.id.summary_row);
         summary.setBackground(createSectionBackground(scale));
-        summary.setPadding(scaledDp(14, scale), scaledDp(12, scale), scaledDp(14, scale), scaledDp(12, scale));
+        summary.setPadding(scaledDp(9, scale), scaledDp(11, scale), scaledDp(9, scale), scaledDp(11, scale));
         LinearLayout.LayoutParams summaryLp = sectionLp(scale, cluster ? 5f : 9f);
         summary.setLayoutParams(summaryLp);
 
@@ -1225,16 +1314,16 @@ public class OverlayService extends Service {
         LinearLayout.LayoutParams summaryMidLp = (LinearLayout.LayoutParams) summaryMid.getLayoutParams();
         summaryMidLp.width = scaledDp(1, scale);
         summaryMidLp.height = scaledDp(42, scale);
-        summaryMidLp.leftMargin = scaledDp(12, scale);
-        summaryMidLp.rightMargin = scaledDp(12, scale);
+        summaryMidLp.leftMargin = scaledDp(8, scale);
+        summaryMidLp.rightMargin = scaledDp(8, scale);
 
         TextView roadInfo = (TextView) root.findViewById(R.id.road_info_text);
         roadInfo.setTextSize(scaledSp(14f, scale));
 
         LinearLayout turnBox = (LinearLayout) root.findViewById(R.id.turn_card);
         turnBox.setBackground(createSectionBackground(scale));
-        turnBox.setPadding(scaledDp(cluster ? 14 : 16, scale), scaledDp(cluster ? 10 : 12, scale),
-                scaledDp(cluster ? 14 : 16, scale), scaledDp(cluster ? 10 : 12, scale));
+        turnBox.setPadding(scaledDp(cluster ? 9 : 10, scale), scaledDp(cluster ? 10 : 11, scale),
+                scaledDp(cluster ? 9 : 10, scale), scaledDp(cluster ? 10 : 11, scale));
         turnBox.setLayoutParams(sectionLp(scale, cluster ? 5f : 9f));
 
         ImageView turnLeadIcon = (ImageView) root.findViewById(R.id.turn_lead_icon);
@@ -1242,6 +1331,11 @@ public class OverlayService extends Service {
         LinearLayout.LayoutParams turnLeadIconLp = (LinearLayout.LayoutParams) turnLeadIcon.getLayoutParams();
         turnLeadIconLp.width = turnLeadIconSize;
         turnLeadIconLp.height = turnLeadIconSize;
+        if (cluster) {
+            clusterTurnLeadExitText = wrapArrowWithExitOverlay(turnLeadIcon, scale);
+        } else {
+            turnLeadExitText = wrapArrowWithExitOverlay(turnLeadIcon, scale);
+        }
 
         TextView turnLead = (TextView) root.findViewById(R.id.turn_lead_text);
         turnLead.setTextSize(scaledSp(13f, scale));
@@ -1256,10 +1350,10 @@ public class OverlayService extends Service {
         TextView turnDistance = (TextView) root.findViewById(R.id.turn_distance);
         turnDistance.setTextSize(scaledSp(cluster ? 22f : 24f, scale));
         LinearLayout.LayoutParams turnDistanceLp = (LinearLayout.LayoutParams) turnDistance.getLayoutParams();
-        turnDistanceLp.leftMargin = scaledDp(18, scale);
+        turnDistanceLp.leftMargin = scaledDp(12, scale);
 
         LinearLayout laneBox = (LinearLayout) root.findViewById(R.id.lane_section);
-        laneBox.setPadding(scaledDp(10, scale), scaledDp(7, scale), scaledDp(10, scale), scaledDp(8, scale));
+        laneBox.setPadding(scaledDp(7, scale), scaledDp(7, scale), scaledDp(7, scale), scaledDp(8, scale));
         laneBox.setLayoutParams(sectionLp(scale, cluster ? 5f : 8f));
         LaneBarView lane = installLaneBarSimple(root, R.id.lane_bar_placeholder, scale, 1.5f);
 
@@ -1268,12 +1362,12 @@ public class OverlayService extends Service {
 
         TextView eta = (TextView) root.findViewById(R.id.eta_text);
         eta.setTextSize(scaledSp(14f, scale));
-        eta.setPadding(scaledDp(12, scale), scaledDp(8, scale), scaledDp(12, scale), scaledDp(8, scale));
+        eta.setPadding(scaledDp(8, scale), scaledDp(8, scale), scaledDp(8, scale), scaledDp(8, scale));
         eta.setBackground(createSectionBackground(scale));
         eta.setLayoutParams(sectionLp(scale, cluster ? 5f : 8f));
 
         LinearLayout alertBox = (LinearLayout) root.findViewById(R.id.alert_card);
-        alertBox.setPadding(scaledDp(14, scale), scaledDp(10, scale), scaledDp(14, scale), scaledDp(10, scale));
+        alertBox.setPadding(scaledDp(9, scale), scaledDp(10, scale), scaledDp(9, scale), scaledDp(10, scale));
         alertBox.setBackground(createSectionBackground(scale));
         alertBox.setLayoutParams(sectionLp(scale, cluster ? 5f : 8f));
 
@@ -1295,7 +1389,7 @@ public class OverlayService extends Service {
 
         TextView detail = (TextView) root.findViewById(R.id.detail_text);
         detail.setTextSize(scaledSp(12f, scale));
-        detail.setPadding(scaledDp(12, scale), scaledDp(8, scale), scaledDp(12, scale), scaledDp(8, scale));
+        detail.setPadding(scaledDp(8, scale), scaledDp(8, scale), scaledDp(8, scale), scaledDp(8, scale));
         detail.setBackground(createSectionBackground(scale));
         detail.setLayoutParams(sectionLp(scale, cluster ? 5f : 6f));
 
@@ -1357,111 +1451,11 @@ public class OverlayService extends Service {
         return root;
     }
 
-    private LinearLayout buildDynamicIslandPanel(Context context, float scale, boolean cluster) {
-        LinearLayout root = (LinearLayout) LayoutInflater.from(context).inflate(R.layout.panel_dynamic_island, null);
-
-        // Dynamic scaling
-        root.setPadding(scaledDp(10, scale), scaledDp(7, scale), scaledDp(12, scale), scaledDp(7, scale));
-        root.setMinimumHeight(scaledDp(48, scale));
-        root.setBackground(createDynamicIslandBackground(scale));
-
-        TextView mode = (TextView) root.findViewById(R.id.mode_text);
-
-        LinearLayout navTurn = (LinearLayout) root.findViewById(R.id.nav_turn_box);
-        ImageView navIcon = (ImageView) root.findViewById(R.id.nav_turn_icon);
-        int navIconSize = scaledDp(28, scale);
-        LinearLayout.LayoutParams navIconLp = (LinearLayout.LayoutParams) navIcon.getLayoutParams();
-        navIconLp.width = navIconSize;
-        navIconLp.height = navIconSize;
-
-        TextView navDist = (TextView) root.findViewById(R.id.nav_turn_dist);
-        navDist.setTextColor(primaryTextColor());
-        navDist.setTextSize(scaledSp(14f, scale));
-        LinearLayout.LayoutParams navDistLp = (LinearLayout.LayoutParams) navDist.getLayoutParams();
-        navDistLp.leftMargin = scaledDp(4, scale);
-        navDistLp.rightMargin = scaledDp(8, scale);
-
-        LinearLayout laneBox = (LinearLayout) root.findViewById(R.id.lane_section);
-        laneBox.setPadding(scaledDp(3, scale), scaledDp(1, scale), scaledDp(3, scale), scaledDp(1, scale));
-        LinearLayout.LayoutParams laneBoxLp = (LinearLayout.LayoutParams) laneBox.getLayoutParams();
-        laneBoxLp.rightMargin = scaledDp(6, scale);
-        LaneBarView lane = installLaneBar(root, R.id.lane_bar_placeholder, scale, 0.82f, 0, 0, true, false, 0);
-
-        LinearLayout lights = (LinearLayout) root.findViewById(R.id.light_row);
-
-        TextView turn = (TextView) root.findViewById(R.id.turn_text);
-        TextView alert = (TextView) root.findViewById(R.id.alert_text);
-
-        if (cluster) {
-            clusterPanel = root;
-            clusterModeRow = null;
-            clusterModeText = mode;
-            clusterTitleText = null;
-            clusterSummaryDivider = null;
-            clusterSummaryRow = null;
-            clusterHeadingInfoText = null;
-            clusterRoadInfoText = null;
-            clusterTurnCard = null;
-            clusterTurnLeadText = null;
-            clusterTurnText = turn;
-            clusterTurnDistanceText = null;
-            clusterTurnIconView = null;
-            clusterTurnDistBadge = null;
-            clusterTurnRowLayout = null;
-            clusterNavTurnBox = navTurn;
-            clusterNavTurnIconView = navIcon;
-            clusterNavTurnDistText = navDist;
-            clusterLaneSection = laneBox;
-            clusterLaneBar = lane;
-            clusterLightRow = lights;
-            clusterEtaText = null;
-            clusterAlertCard = null;
-            clusterLimitBadgeText = null;
-            clusterAlertCaptionText = null;
-            clusterAlertText = alert;
-            clusterAlertRow = null;
-            clusterDetailText = null;
-        } else {
-            panel = root;
-            modeRow = null;
-            modeText = mode;
-            titleText = null;
-            summaryDivider = null;
-            summaryRow = null;
-            headingInfoText = null;
-            roadInfoText = null;
-            turnCard = null;
-            turnLeadText = null;
-            turnText = turn;
-            turnDistanceText = null;
-            turnIconView = null;
-            turnDistBadge = null;
-            turnRowLayout = null;
-            navTurnBox = navTurn;
-            navTurnIconView = navIcon;
-            navTurnDistText = navDist;
-            laneSection = laneBox;
-            laneBar = lane;
-            lightRow = lights;
-            etaText = null;
-            alertCard = null;
-            limitBadgeText = null;
-            alertCaptionText = null;
-            alertText = alert;
-            alertRow = null;
-            detailText = null;
-        }
-
-        applyTextPalette();
-        refreshTurnCard();
-        return root;
-    }
-
     private GradientDrawable createDynamicIslandBackground(float scale) {
         GradientDrawable bg = new GradientDrawable();
         bg.setCornerRadius(scaledDp(999, scale));
         int opacity = AppPrefs.getBackgroundOpacityPercent(this);
-        bg.setColor(withAlpha(0xFF111827, opacity));
+        bg.setColor(withAlpha(AppPrefs.getBackgroundColor(this), opacity));
         bg.setStroke(scaledDp(1, scale), withAlpha(0xFFFFFFFF, AppPrefs.strokeOpacityForBackground(opacity)));
         return bg;
     }
@@ -1491,6 +1485,7 @@ public class OverlayService extends Service {
         navIconLp.width = navIconSize;
         navIconLp.height = navIconSize;
         navIconLp.leftMargin = scaledDp(10, scale);
+        navExitText = wrapArrowWithExitOverlay(navIcon, scale);
 
         // Turn info column
         LinearLayout distRoadCol = (LinearLayout) root.findViewById(R.id.full_mode_turn_info_col);
@@ -1512,7 +1507,6 @@ public class OverlayService extends Service {
         LinearLayout.LayoutParams navRoadLp = (LinearLayout.LayoutParams) navRoad.getLayoutParams();
         navRoadLp.topMargin = scaledDp(1, scale);
 
-        // ETA info column
         LinearLayout etaInfoCol = (LinearLayout) root.findViewById(R.id.full_mode_eta_info_col);
         etaInfoCol.getLayoutParams().width = fullInfoWidth;
         LinearLayout.LayoutParams etaInfoColLp = (LinearLayout.LayoutParams) etaInfoCol.getLayoutParams();
@@ -1631,6 +1625,7 @@ public class OverlayService extends Service {
         LinearLayout.LayoutParams navIconLp = new LinearLayout.LayoutParams(navIconSize, navIconSize);
         navIconLp.setMargins(scaledDp(10, scale), 0, 0, 0);
         navTurn.addView(navIcon, navIconLp);
+        clusterNavExitText = wrapArrowWithExitOverlay(navIcon, scale);
 
         // Turn info column
         LinearLayout distRoadCol = new LinearLayout(context);
@@ -1657,6 +1652,7 @@ public class OverlayService extends Service {
         LinearLayout.LayoutParams navRoadLp = new LinearLayout.LayoutParams(-1, -2);
         navRoadLp.setMargins(0, scaledDp(1, scale), 0, 0);
         distRoadCol.addView(navRoad, navRoadLp);
+
 
         LinearLayout.LayoutParams distRoadColLp = new LinearLayout.LayoutParams(fullInfoWidth, -2);
         distRoadColLp.setMargins(scaledDp(3, scale), 0, scaledDp(3, scale), 0);
@@ -1855,12 +1851,48 @@ public class OverlayService extends Service {
         return bg;
     }
 
+    // -- Adaptive speed-text ------------------------------------------
+    private final android.graphics.Paint fitPaint = new android.graphics.Paint();
+
+    private float fitCircleTextSize(float circleDp, float scale, String text) {
+        if (TextUtils.isEmpty(text)) return scaledSp(circleDp * 0.22f, scale);
+        float maxWidthPx = scaledDp(Math.round(circleDp * 0.72f), scale);
+        float lo = scaledSp(circleDp * 0.14f, scale);
+        float hi = scaledSp(circleDp * 0.55f, scale);
+        fitPaint.setTypeface(Typeface.DEFAULT_BOLD);
+        fitPaint.setAntiAlias(true);
+        for (int i = 0; i < 12; i++) {
+            float mid = (lo + hi) / 2f;
+            fitPaint.setTextSize(mid);
+            if (fitPaint.measureText(text) <= maxWidthPx) lo = mid;
+            else hi = mid;
+        }
+        return lo;
+    }
+
+    private float fitCircleTextSizePx(int circlePx, String text) {
+        if (TextUtils.isEmpty(text) || circlePx <= 0) return circlePx * 0.22f;
+        float maxWidthPx = circlePx * 0.72f;
+        float lo = circlePx * 0.12f;
+        float hi = circlePx * 0.52f;
+        fitPaint.setTypeface(Typeface.DEFAULT_BOLD);
+        fitPaint.setAntiAlias(true);
+        for (int i = 0; i < 12; i++) {
+            float mid = (lo + hi) / 2f;
+            fitPaint.setTextSize(mid);
+            if (fitPaint.measureText(text) <= maxWidthPx) lo = mid;
+            else hi = mid;
+        }
+        return lo;
+    }
+
     private LinearLayout buildPanelForContext(Context context, float scale, boolean cluster) {
         float oldDensity = activeDensity;
         activeDensity = context.getResources().getDisplayMetrics().density;
         try {
             resetPanelUiRefs(cluster);
             LinearLayout panel = buildPanelForStyle(AppPrefs.getOverlayUiStyle(this), context, scale, cluster);
+            installTmcProgressForeground(panel, context, scale, cluster);
             FontManager.applyToViewTree(context, panel);
             if (isDynamicIslandOrCard()) {
                 updateDynamicIslandLayout();
@@ -1880,6 +1912,31 @@ public class OverlayService extends Service {
         }
     }
 
+    private void installTmcProgressForeground(LinearLayout target, Context context, float scale, boolean cluster) {
+        if (target == null) {
+            return;
+        }
+        TmcProgressBar bar = new TmcProgressBar(context);
+        String style = AppPrefs.getOverlayUiStyle(this);
+        if (OverlayUiStyles.DYNAMIC_ISLAND_FULL.equals(style)) {
+            bar.setCapsuleInsetMode(true);
+        } else if (OverlayUiStyles.CARD.equals(style)) {
+            bar.setHorizontalInsetPx(scaledDp(12, scale));
+        } else {
+            bar.setHorizontalInsetPx(cluster ? clusterDp(14) : dp(14));
+        }
+        if (!TextUtils.isEmpty(cachedTmcJson)
+                && System.currentTimeMillis() - tmcUpdatedAt < TMC_TTL_MS) {
+            bar.updateTmcData(cachedTmcJson);
+        }
+        target.setForeground(bar);
+        if (cluster) {
+            clusterTmcProgressBar = bar;
+        } else {
+            mainTmcProgressBar = bar;
+        }
+    }
+
     private void resetPanelUiRefs(boolean cluster) {
         if (cluster) {
             clusterModeRow = null;
@@ -1892,9 +1949,11 @@ public class OverlayService extends Service {
             clusterTurnCard = null;
             clusterTurnLeadText = null;
             clusterTurnLeadIconView = null;
+            clusterTurnLeadExitText = null;
             clusterTurnText = null;
             clusterTurnDistanceText = null;
             clusterTurnIconView = null;
+            clusterTurnExitText = null;
             clusterTurnDistBadge = null;
             clusterTurnRowLayout = null;
             clusterLaneSection = null;
@@ -1909,6 +1968,7 @@ public class OverlayService extends Service {
             clusterAlertRow = null;
             clusterNavTurnBox = null;
             clusterNavTurnIconView = null;
+            clusterNavExitText = null;
             clusterNavTurnDistText = null;
             clusterDetailText = null;
             clusterCompactWidgetRow = null;
@@ -1927,6 +1987,7 @@ public class OverlayService extends Service {
             clusterCardNavLightRow = null;
             clusterCardCruiseEdogRow = null;
             clusterCardNavEdogRow = null;
+            clusterTmcProgressBar = null;
             fullModeClusterTurnInfoCol = null;
             fullModeClusterEtaInfoCol = null;
             fullModeClusterEtaRemainDist = null;
@@ -1961,6 +2022,7 @@ public class OverlayService extends Service {
         alertRow = null;
         navTurnBox = null;
         navTurnIconView = null;
+        navExitText = null;
         navTurnDistText = null;
         detailText = null;
         compactWidgetRow = null;
@@ -1979,6 +2041,7 @@ public class OverlayService extends Service {
         cardNavLightRow = null;
         cardCruiseEdogRow = null;
         cardNavEdogRow = null;
+        mainTmcProgressBar = null;
         fullModeTurnInfoCol = null;
         fullModeEtaInfoCol = null;
         fullModeEtaRemainDist = null;
@@ -1993,14 +2056,13 @@ public class OverlayService extends Service {
         if (OverlayUiStyles.DYNAMIC_ISLAND_FULL.equals(normalized)) {
             return buildDynamicIslandFullPanel(context, scale, cluster);
         }
-        if (OverlayUiStyles.DYNAMIC_ISLAND_TEST.equals(normalized)) {
-            return buildDynamicIslandPanel(context, scale, cluster);
-        }
         if (OverlayUiStyles.NEW.equals(normalized)) {
             return buildDashboardPanel(context, scale * 0.86f, cluster);
         }
         return buildClassicPanel(context, scale, cluster);
     }
+
+    // -- Highway exit/entrance info (KEY_TYPE 12011) -------------------------
 
     private void updateClusterPosition() {
         if (clusterWindowManager == null || clusterPanel == null || clusterParams == null) {
@@ -2196,11 +2258,14 @@ public class OverlayService extends Service {
             clusterModeText.setText(currentModeLabel);
         }
         clearTurnState();
+        clearExitInfoState();
         hideLaneData();
         trafficLights.clear();
         renderTrafficLights();
+        clearTmcData();
         clearAlertDetails();
         clearServiceAreaDetails();
+        // Clear TMC traffic light bar
         if (etaText != null) {
             etaText.setText("");
             etaText.setVisibility(View.GONE);
@@ -2220,6 +2285,7 @@ public class OverlayService extends Service {
         updateDynamicIslandLayout();
         updateCardLayout();
         refreshRoadTitle();
+        releasePanelSizeHoldsNow();
         refreshPanelVisibility();
     }
 
@@ -2276,7 +2342,7 @@ public class OverlayService extends Service {
         if (keyType == 10019) {
             return state == 5 || state == 6 || state == 8 || state == 10 || state == 11 || state == 24;
         }
-        if (keyType == 10001 || keyType == 60021 || keyType == 13012) {
+        if (keyType == 10001 || keyType == 60021 || keyType == 13012 || keyType == 13011) {
             return true;
         }
         if (keyType == AmapConstants.KEY_TYPE_TRAFFIC_LIGHT && TrafficLightParser.hasCountdownPayload(extras)) {
@@ -2401,6 +2467,7 @@ public class OverlayService extends Service {
         copyTextState(alertText, clusterAlertText);
         copyTextState(detailText, clusterDetailText);
         copyVisibility(laneSection, clusterLaneSection);
+        syncDynamicIslandClusterNavigationState();
         applyCachedLaneData();
         renderTrafficLights();
         applyContentVisibilityPrefs();
@@ -2419,6 +2486,24 @@ public class OverlayService extends Service {
         if (source != null && target != null) {
             target.setVisibility(source.getVisibility());
         }
+    }
+
+    private void syncDynamicIslandClusterNavigationState() {
+        if (!isAnyDynamicIslandUiEnabled()) {
+            return;
+        }
+        updateNavTurn(clusterNavTurnBox, clusterNavTurnIconView, clusterNavTurnDistText);
+        if (clusterCompactNavTurnRoadText != null) {
+            String roadName = currentTurnRoad;
+            if (TextUtils.isEmpty(roadName) || "\u4e0b\u4e00\u8def\u53e3".equals(roadName)) {
+                roadName = currentRoadName;
+            }
+            updateCompactMarqueeText(clusterCompactNavTurnRoadText, roadName);
+        }
+        copyTextState(fullModeEtaRemainDist, fullModeClusterEtaRemainDist);
+        copyTextState(fullModeEtaArriveTime, fullModeClusterEtaArriveTime);
+        copyVisibility(fullModeTurnInfoCol, fullModeClusterTurnInfoCol);
+        copyVisibility(fullModeEtaInfoCol, fullModeClusterEtaInfoCol);
     }
 
     private void updateCompactMarqueeText(TextView view, String text) {
@@ -2459,7 +2544,7 @@ public class OverlayService extends Service {
     private void updateClusterCompactTurnText() {
         if (clusterCompactNavTurnRoadText != null) {
             String roadName = currentTurnRoad;
-            if (TextUtils.isEmpty(roadName)) {
+            if (TextUtils.isEmpty(roadName) || "\u4e0b\u4e00\u8def\u53e3".equals(roadName)) {
                 roadName = currentRoadName;
             }
             updateCompactMarqueeText(clusterCompactNavTurnRoadText, roadName);
@@ -2473,8 +2558,12 @@ public class OverlayService extends Service {
 
 
     private boolean isDynamicIslandOrCard() {
-        return AppPrefs.isDynamicIslandUiEnabled(this)
+        return isAnyDynamicIslandUiEnabled()
                 || AppPrefs.isCardUiEnabled(this);
+    }
+
+    private boolean isAnyDynamicIslandUiEnabled() {
+        return AppPrefs.isDynamicIslandUiEnabled(this);
     }
 
         private void showAnyPanel() {
@@ -2549,20 +2638,21 @@ public class OverlayService extends Service {
             }
         }
 
-        int width = target.getWidth();
-        int height = target.getHeight();
-        if (width <= 0 || height <= 0) {
-            int wSpec = View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED);
-            int hSpec = View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED);
-            target.measure(wSpec, hSpec);
-            width = target.getMeasuredWidth();
-            height = target.getMeasuredHeight();
-        }
+        int[] measured = measurePanelContent(target);
+        int width = measured[0];
+        int height = measured[1];
 
         int held = cluster ? clusterPanelHeldMinWidth : mainPanelHeldMinWidth;
         int heldHeight = cluster ? clusterPanelHeldMinHeight : mainPanelHeldMinHeight;
-        int nextMin = Math.max(baseMin, Math.max(held, width));
-        int nextMinHeight = Math.max(baseMinHeight, Math.max(heldHeight, height));
+        int threshold = panelShrinkThresholdPx(cluster);
+        int nextMin = Math.max(baseMin, held);
+        int nextMinHeight = Math.max(baseMinHeight, heldHeight);
+        if (held <= 0 || width > held + threshold) {
+            nextMin = Math.max(baseMin, width);
+        }
+        if (heldHeight <= 0 || height > heldHeight + threshold) {
+            nextMinHeight = Math.max(baseMinHeight, height);
+        }
         boolean expanded = nextMin > held || nextMinHeight > heldHeight;
         if (cluster) {
             clusterPanelHeldMinWidth = nextMin;
@@ -2611,22 +2701,37 @@ public class OverlayService extends Service {
         }
         int baseMin = Math.max(0, cluster ? clusterPanelBaseMinWidth : mainPanelBaseMinWidth);
         int baseMinHeight = Math.max(0, cluster ? clusterPanelBaseMinHeight : mainPanelBaseMinHeight);
+        int held = cluster ? clusterPanelHeldMinWidth : mainPanelHeldMinWidth;
+        int heldHeight = cluster ? clusterPanelHeldMinHeight : mainPanelHeldMinHeight;
+        int[] measured = measurePanelContent(target);
+        int targetMin = Math.max(baseMin, measured[0]);
+        int targetMinHeight = Math.max(baseMinHeight, measured[1]);
+        int threshold = panelShrinkThresholdPx(cluster);
+        if ((held > 0 && held - targetMin <= threshold)
+                && (heldHeight > 0 && heldHeight - targetMinHeight <= threshold)) {
+            if (cluster) {
+                clusterPanelWidthUnlock = null;
+            } else {
+                mainPanelWidthUnlock = null;
+            }
+            return;
+        }
         if (cluster) {
-            clusterPanelHeldMinWidth = 0;
-            clusterPanelHeldMinHeight = 0;
+            clusterPanelHeldMinWidth = targetMin;
+            clusterPanelHeldMinHeight = targetMinHeight;
             clusterPanelWidthUnlock = null;
         } else {
-            mainPanelHeldMinWidth = 0;
-            mainPanelHeldMinHeight = 0;
+            mainPanelHeldMinWidth = targetMin;
+            mainPanelHeldMinHeight = targetMinHeight;
             mainPanelWidthUnlock = null;
         }
         boolean changed = false;
-        if (target.getMinimumWidth() != baseMin) {
-            target.setMinimumWidth(baseMin);
+        if (target.getMinimumWidth() != targetMin) {
+            target.setMinimumWidth(targetMin);
             changed = true;
         }
-        if (target.getMinimumHeight() != baseMinHeight) {
-            target.setMinimumHeight(baseMinHeight);
+        if (target.getMinimumHeight() != targetMinHeight) {
+            target.setMinimumHeight(targetMinHeight);
             changed = true;
         }
         if (changed) target.requestLayout();
@@ -2657,6 +2762,58 @@ public class OverlayService extends Service {
         clusterPanelBaseMinHeight = -1;
         clusterPanelHeldMinWidth = 0;
         clusterPanelHeldMinHeight = 0;
+    }
+
+    private void releasePanelSizeHoldsNow() {
+        releasePanelSizeHold(false);
+        releasePanelSizeHold(true);
+    }
+
+    private void releasePanelSizeHold(boolean cluster) {
+        LinearLayout target = cluster ? clusterPanel : panel;
+        if (cluster) {
+            if (clusterPanelWidthUnlock != null) {
+                mainHandler.removeCallbacks(clusterPanelWidthUnlock);
+                clusterPanelWidthUnlock = null;
+            }
+        } else if (mainPanelWidthUnlock != null) {
+            mainHandler.removeCallbacks(mainPanelWidthUnlock);
+            mainPanelWidthUnlock = null;
+        }
+
+        int baseMin = cluster ? clusterPanelBaseMinWidth : mainPanelBaseMinWidth;
+        int baseMinHeight = cluster ? clusterPanelBaseMinHeight : mainPanelBaseMinHeight;
+        int width = Math.max(0, baseMin);
+        int height = Math.max(0, baseMinHeight);
+        if (cluster) {
+            clusterPanelHeldMinWidth = 0;
+            clusterPanelHeldMinHeight = 0;
+        } else {
+            mainPanelHeldMinWidth = 0;
+            mainPanelHeldMinHeight = 0;
+        }
+        if (target == null) {
+            return;
+        }
+        boolean changed = false;
+        if (target.getMinimumWidth() != width) {
+            target.setMinimumWidth(width);
+            changed = true;
+        }
+        if (target.getMinimumHeight() != height) {
+            target.setMinimumHeight(height);
+            changed = true;
+        }
+        if (changed) {
+            target.requestLayout();
+        }
+        target.post(() -> {
+            if (cluster) {
+                updateClusterPosition();
+            } else {
+                updateOverlayPosition();
+            }
+        });
     }
 
     private boolean hasVisibleChildren(LinearLayout layout) {
@@ -2763,6 +2920,7 @@ public class OverlayService extends Service {
         }
         requestLaneInfo();
         requestTrafficLightInfo();
+        requestTmcInfo();
     }
 
     private void stopSelfIfNoVisuals() {
@@ -2838,12 +2996,23 @@ public class OverlayService extends Service {
         ensureOverlay();
         boolean displayPolicyChanged = targetBroadcastChanged || updateNavigationActivityFromExtras(extras);
         updateModeFromExtras(extras);
+        updateProtocolDetails(extras);  // must run before updateTurn* so roadType is current
+        updateRouteGuidanceExitInfo(extras);
         updateTurnFromExtras(extras);
         updateEtaFromExtras(extras);
         updateLaneFromExtras(extras);
-        updateProtocolDetails(extras);
 
         int keyType = intValue(extras, "KEY_TYPE", -1);
+
+        if (keyType == 13011 || hasAny(extras, "EXTRA_TMC_SEGMENT", "extra_tmc_segment")) {
+            updateTmcData(valueString(extras, "EXTRA_TMC_SEGMENT", "extra_tmc_segment"));
+        }
+
+        // Highway exit/entrance info (KEY_TYPE 12011)
+        if (ACTION_SEND.equals(action) && keyType == 12011) {
+            handleExitInfo(extras);
+        }
+
         boolean trafficLightAction = action != null
                 && action.toLowerCase(java.util.Locale.US).contains("traffic_light");
         if (keyType == AmapConstants.KEY_TYPE_TRAFFIC_LIGHT
@@ -2917,7 +3086,7 @@ public class OverlayService extends Service {
         GradientDrawable bg = new GradientDrawable();
         bg.setCornerRadius(dp(14));
         int opacity = AppPrefs.getBackgroundOpacityPercent(this);
-        bg.setColor(withAlpha(0xFF111827, opacity));
+        bg.setColor(withAlpha(AppPrefs.getBackgroundColor(this), opacity));
         bg.setStroke(dp(1), withAlpha(0xFFFFFFFF, AppPrefs.strokeOpacityForBackground(opacity)));
         return bg;
     }
@@ -2926,7 +3095,7 @@ public class OverlayService extends Service {
         GradientDrawable bg = new GradientDrawable();
         bg.setCornerRadius(clusterDp(14));
         int opacity = AppPrefs.getBackgroundOpacityPercent(this);
-        bg.setColor(withAlpha(0xFF111827, opacity));
+        bg.setColor(withAlpha(AppPrefs.getBackgroundColor(this), opacity));
         bg.setStroke(clusterDp(1), withAlpha(0xFFFFFFFF, AppPrefs.strokeOpacityForBackground(opacity)));
         return bg;
     }
@@ -3169,6 +3338,7 @@ public class OverlayService extends Service {
             updateDynamicIslandLayout();
             updateCardLayout();
         }
+        restoreExitAlternatorVisualState();
         syncLaneVisibility();
     }
 
@@ -3176,8 +3346,13 @@ public class OverlayService extends Service {
         currentTurnLead = "";
         currentTurnRoad = "";
         currentTurnDistance = "";
+        currentTurnDistanceMeters = -1;
         currentTurnIcon = 0;
         navigationTurnDir = -1;
+        stopTurnBlink();
+        // NOTE: exit info (12011) is independent of turn state (10001);
+        // do NOT clear exitResultState/exitNameNum here — let ensureExitAlternator
+        // decide whether to pause/resume based on currentTurnIcon.
         refreshTurnCard();
         if (compactNavTurnRoadText != null) {
             compactNavTurnRoadText.setVisibility(View.GONE);
@@ -3283,7 +3458,7 @@ public class OverlayService extends Service {
     }
 
     private void syncEtaVisibility() {
-        boolean visible = AppPrefs.isEtaVisible(this)
+        boolean visible = (AppPrefs.isEtaVisible(this) || AppPrefs.shouldShowDestination(this))
                 && etaText != null
                 && !TextUtils.isEmpty(etaText.getText());
         setPairedVisibility(etaText, clusterEtaText, visible);
@@ -3300,12 +3475,10 @@ public class OverlayService extends Service {
         boolean visible;
         if (AppPrefs.isCardUiEnabled(this)) {
             visible = AppPrefs.isAlertVisible(this)
-                    && alertRow != null
-                    && alertRow.getVisibility() == View.VISIBLE;
+                    && hasFreshEdogAlert();
         } else {
             visible = AppPrefs.isAlertVisible(this)
-                    && alertText != null
-                    && !TextUtils.isEmpty(alertText.getText());
+                    && hasFreshEdogAlert();
         }
         if (alertCard != null || clusterAlertCard != null) {
             setPairedVisibility(alertCard, clusterAlertCard, visible);
@@ -3372,7 +3545,7 @@ public class OverlayService extends Service {
         speedBox.addView(speedIcon, new FrameLayout.LayoutParams(iconSize, iconSize));
         TextView speedText = new TextView(context);
         speedText.setTextColor(0xFFDC2626);
-        speedText.setTextSize(scaledSp(iconSizeDp * 0.34f, scale));
+        speedText.setTextSize(scaledSp(11f, scale));
         speedText.setTypeface(Typeface.DEFAULT_BOLD);
         speedText.setGravity(Gravity.CENTER);
         speedText.setIncludeFontPadding(false);
@@ -3395,7 +3568,7 @@ public class OverlayService extends Service {
         cameraIconFrame.addView(cameraIcon, new FrameLayout.LayoutParams(iconSize, iconSize));
         TextView cameraSpeedOverlay = new TextView(context);
         cameraSpeedOverlay.setTextColor(0xFFDC2626);
-        cameraSpeedOverlay.setTextSize(scaledSp(iconSizeDp * 0.34f, scale));
+        cameraSpeedOverlay.setTextSize(scaledSp(11f, scale));
         cameraSpeedOverlay.setTypeface(Typeface.DEFAULT_BOLD);
         cameraSpeedOverlay.setGravity(Gravity.CENTER);
         cameraSpeedOverlay.setIncludeFontPadding(false);
@@ -3459,6 +3632,10 @@ public class OverlayService extends Service {
         box.setVisibility(View.VISIBLE);
     }
 
+    private static final int TURN_ARROW_GREEN = 0xFF22C55E;
+    private static final android.graphics.PorterDuffColorFilter TURN_GREEN_FILTER =
+            new android.graphics.PorterDuffColorFilter(TURN_ARROW_GREEN, android.graphics.PorterDuff.Mode.SRC_IN);
+
     private void applyTurnIcon(ImageView view, int icon) {
         if (view == null) {
             return;
@@ -3470,6 +3647,7 @@ public class OverlayService extends Service {
             resId = fallbackTurnIconResource(icon);
         }
         view.setImageResource(resId);
+        view.setColorFilter(TURN_GREEN_FILTER);
         view.setRotation(rotation);
         view.setScaleX(scaleX);
         view.setVisibility(View.VISIBLE);
@@ -3567,8 +3745,13 @@ public class OverlayService extends Service {
             currentRoadName = "";
             currentHeadingSummary = "";
             currentRoadTypeSummary = "";
+            currentRoadType = -1;
             clearTurnState();
+            clearExitInfoState();
+            clearTmcData();
+            clearAlertDetails();
             clearServiceAreaDetails();
+            releasePanelSizeHoldsNow();
             updateDynamicIslandLayout();
         } else if (keyType == 10019 && state == 8) {
             mode = "\u5bfc\u822a";
@@ -3580,6 +3763,7 @@ public class OverlayService extends Service {
             currentRoadName = "";
             currentHeadingSummary = "";
             currentRoadTypeSummary = "";
+            currentRoadType = -1;
             updateDynamicIslandLayout();
             if (etaText != null) {
                 etaText.setVisibility(View.GONE);
@@ -3596,12 +3780,9 @@ public class OverlayService extends Service {
             trafficLights.clear();
             hideLaneData();
             clearTurnState();
-            if (alertText != null) {
-                alertText.setVisibility(View.GONE);
-            }
-            if (clusterAlertText != null) {
-                clusterAlertText.setVisibility(View.GONE);
-            }
+            clearExitInfoState();
+            clearTmcData();
+            clearAlertDetails();
             clearServiceAreaDetails();
             if (detailText != null) {
                 detailText.setVisibility(View.GONE);
@@ -3610,6 +3791,7 @@ public class OverlayService extends Service {
                 clusterDetailText.setVisibility(View.GONE);
             }
             currentLimitSpeed = -1;
+            releasePanelSizeHoldsNow();
         } else if (type == 1) {
             mode = "\u6a21\u62df\u5bfc\u822a";
         } else if (type == 2 || (!hasRoute && (speed >= 0 || !TextUtils.isEmpty(road)))) {
@@ -3622,7 +3804,10 @@ public class OverlayService extends Service {
             mode = "\u5df2\u8fde\u63a5";
             currentRoadName = "";
             currentRoadTypeSummary = "";
+            currentRoadType = -1;
             clearTurnState();
+            clearExitInfoState();
+            clearTmcData();
             clearServiceAreaDetails();
         }
 
@@ -3659,7 +3844,7 @@ public class OverlayService extends Service {
     }
 
     private void updateTurnFromExtras(Bundle extras) {
-        boolean compactMode = AppPrefs.isDynamicIslandUiEnabled(this);
+        boolean compactMode = isAnyDynamicIslandUiEnabled();
         if (turnText == null && (compactNavTurnRoadText == null || !compactMode) && !AppPrefs.isCardUiEnabled(this)) {
             return;
         }
@@ -3678,15 +3863,21 @@ public class OverlayService extends Service {
         }
         navigationTurnDir = turnIconToTrafficDir(icon);
         currentTurnIcon = icon;
+        // Always extract raw meters for distance-based blink, regardless of auto-format
+        int meters = intValue(extras, "SEG_REMAIN_DIS", intValue(extras, "NEXT_SEG_REMAIN_DIS", -1));
         String distance = valueString(extras, "SEG_REMAIN_DIS_AUTO", "NEXT_SEG_REMAIN_DIS_AUTO");
         if (TextUtils.isEmpty(distance)) {
-            int meters = intValue(extras, "SEG_REMAIN_DIS", intValue(extras, "NEXT_SEG_REMAIN_DIS", -1));
             if (meters > 0) {
                 distance = (compactMode || AppPrefs.isCardUiEnabled(this)) ? formatDistanceCompact(meters) : formatDistance(meters);
             }
         } else if (compactMode || AppPrefs.isCardUiEnabled(this)) {
             distance = distance.replace("\u516c\u91cc", "km").replace("\u7c73", "m");
         }
+        // Fallback: parse formatted string if raw integer unavailable
+        if (meters <= 0 && !TextUtils.isEmpty(distance)) {
+            meters = parseDistanceMeters(distance);
+        }
+        currentTurnDistanceMeters = meters > 0 ? meters : -1;
         String nextRoad = valueString(extras, "NEXT_ROAD_NAME", "nextRoadName", "NEXT_ROAD",
                 "NEXT_ROAD_NAME_AUTO", "SEG_ROAD_NAME", "NEXT_SEG_ROAD_NAME", "ROAD_NAME", "roadName");
         currentTurnLead = "\u4e0b\u4e00\u8def\u53e3";
@@ -3695,6 +3886,8 @@ public class OverlayService extends Service {
         currentTurnDistance = TextUtils.isEmpty(distance) ? "" : distance;
         refreshTurnCard();
         syncTurnVisibility();
+        ensureExitAlternator();
+        startTurnBlink();
         if (AppPrefs.isTurnVisible(this)) {
             showAnyPanel();
         }
@@ -3772,33 +3965,52 @@ public class OverlayService extends Service {
             }
         }
         lightRow.removeAllViews();
-        if (clusterLightRow != null) {
-            clusterLightRow.removeAllViews();
+        if (clusterLightRow != null) { clusterLightRow.removeAllViews(); }
+        int activeLightCount = 0;
+        boolean anyBreathing = false;
+        for (Integer key : keys) {
+            TrafficLightParser.LightState state = trafficLights.get(key);
+            if (state == null) continue;
+            int s = TrafficLightParser.currentLightSeconds(state, now);
+            if (s > 0) {
+                activeLightCount++;
+                if (s <= 4) { anyBreathing = true; breathingLightKeys.add(key); }
+                else { breathingLightKeys.remove(key); }
+            }
+        }
+        String uiStyle = AppPrefs.getOverlayUiStyle(this);
+        boolean isClassicOrNew = OverlayUiStyles.OLD.equals(uiStyle) || OverlayUiStyles.NEW.equals(uiStyle);
+        float lightCountScale = 1f;
+        if (isClassicOrNew && activeLightCount >= 2) lightCountScale = 0.75f;
+        float mainScale = overlayScale * lightCountScale;
+        float clScale = clusterScale * lightCountScale;
+        long breathNow = System.currentTimeMillis();
+        float breathAlpha = 1f;
+        if (anyBreathing) {
+            double phase = (breathNow % 1000L) / 1000.0;
+            breathAlpha = 0.25f + 0.75f * (float) Math.abs(Math.sin(phase * Math.PI));
         }
         boolean showMainDirectionLabel = true;
         boolean showClusterDirectionLabel = true;
         for (Integer key : keys) {
             TrafficLightParser.LightState state = trafficLights.get(key);
-            if (state == null) {
-                continue;
-            }
+            if (state == null) continue;
             int seconds = TrafficLightParser.currentLightSeconds(state, now);
-            if (seconds <= 0) {
-                continue;
-            }
-            lightRow.addView(lightPill(this, state, showMainDirectionLabel, overlayScale, seconds));
+            if (seconds <= 0) { breathingLightKeys.remove(key); continue; }
+            View pill = lightPill(this, state, showMainDirectionLabel, mainScale, seconds);
+            if (anyBreathing && seconds <= 4) pill.setAlpha(breathAlpha);
+            lightRow.addView(pill);
             if (clusterLightRow != null && clusterContext != null) {
-                clusterLightRow.addView(lightPill(clusterContext, state,
-                        showClusterDirectionLabel, clusterScale, seconds));
+                View clusterPill = lightPill(clusterContext, state, showClusterDirectionLabel, clScale, seconds);
+                if (anyBreathing && seconds <= 4) clusterPill.setAlpha(breathAlpha);
+                clusterLightRow.addView(clusterPill);
             }
         }
         syncTrafficLightVisibility();
-        if (AppPrefs.isLightVisible(this) && lightRow.getChildCount() > 0) {
-            showAnyPanel();
-        }
+        if (AppPrefs.isLightVisible(this) && lightRow.getChildCount() > 0) showAnyPanel();
         mainHandler.removeCallbacks(trafficLightTicker);
         if (!trafficLights.isEmpty()) {
-            mainHandler.postDelayed(trafficLightTicker, LIGHT_TICK_MS);
+            mainHandler.postDelayed(trafficLightTicker, anyBreathing ? 120L : LIGHT_TICK_MS);
         }
     }
 
@@ -4170,7 +4382,7 @@ public class OverlayService extends Service {
     }
 
     private void updateEtaFromExtras(Bundle extras) {
-        boolean compactMode = AppPrefs.isDynamicIslandUiEnabled(this);
+        boolean compactMode = isAnyDynamicIslandUiEnabled();
         if (etaText == null && !compactMode) {
             return;
         }
@@ -4201,26 +4413,30 @@ public class OverlayService extends Service {
             distance = distance.replace("公里", "km").replace("米", "m");
         }
 
-        StringBuilder text = new StringBuilder();
+        StringBuilder routeText = new StringBuilder();
         if (!TextUtils.isEmpty(distance)) {
-            text.append(distance);
+            routeText.append(distance);
         }
         if (!TextUtils.isEmpty(time) && !AppPrefs.isCardUiEnabled(this)) {
-            if (text.length() > 0) {
-                text.append(" \u00b7 ");
+            if (routeText.length() > 0) {
+                routeText.append(" \u00b7 ");
             }
-            text.append(time);
+            routeText.append(time);
         }
         if (!TextUtils.isEmpty(eta)) {
             String cleanEta = eta.replace("\u9884\u8ba1", "").replace("\u5230\u8fbe", "\u5230").trim();
             if (!TextUtils.isEmpty(cleanEta)) {
-                if (text.length() > 0) {
-                    text.append(" \u00b7 ");
+                if (routeText.length() > 0) {
+                    routeText.append(" \u00b7 ");
                 }
-                text.append(cleanEta);
+                routeText.append(cleanEta);
             }
         }
-        if (!TextUtils.isEmpty(destination) && !AppPrefs.isCardUiEnabled(this)) {
+        StringBuilder text = new StringBuilder();
+        if (AppPrefs.isEtaVisible(this) && routeText.length() > 0) {
+            text.append(routeText);
+        }
+        if (AppPrefs.shouldShowDestination(this) && !TextUtils.isEmpty(destination)) {
             if (text.length() > 0) {
                 text.append('\n');
             }
@@ -4239,13 +4455,13 @@ public class OverlayService extends Service {
             if (!TextUtils.isEmpty(road) && !roadIsEmptyDestination) {
                 currentRoadName = road;
             }
-            if (!compactMode && !AppPrefs.isDynamicIslandUiEnabled(this)) {
+            if (!compactMode && !isAnyDynamicIslandUiEnabled()) {
                 refreshRoadTitle();
                 syncEtaVisibility();
-                if (AppPrefs.isEtaVisible(this)) {
+                if (AppPrefs.isEtaVisible(this) || AppPrefs.shouldShowDestination(this)) {
                     showAnyPanel();
                 }
-            } else if (AppPrefs.isDynamicIslandUiEnabled(this)) {
+            } else if (isAnyDynamicIslandUiEnabled()) {
                 // Store ETA info for alternating display
                 int remainSec = intValue(extras, "ROUTE_REMAIN_TIME", -1);
                 if (remainSec <= 0) {
@@ -4265,6 +4481,10 @@ public class OverlayService extends Service {
                     if (compactCruiseRoadText != null && inCruiseMode) {
                         if (compactCruiseRoadText != null) compactCruiseRoadText.setText(road);
                     }
+                }
+                updateDynamicIslandLayout();
+                if (AppPrefs.isEtaVisible(this) || AppPrefs.shouldShowDestination(this)) {
+                    showAnyPanel();
                 }
             } else if (!TextUtils.isEmpty(road) && !roadIsEmptyDestination) {
                 if (!AppPrefs.isCardUiEnabled(this) && compactCruiseRoadText != null && inCruiseMode) {
@@ -4336,11 +4556,10 @@ public class OverlayService extends Service {
     }
 
     private void updateAlertDetails(Bundle extras) {
-        boolean compactMode = AppPrefs.isDynamicIslandUiEnabled(this);
+        boolean compactMode = isAnyDynamicIslandUiEnabled();
         if (alertText == null && !compactMode && !AppPrefs.isCardUiEnabled(this)) {
             return;
         }
-        ArrayList<String> parts = new ArrayList<>();
         boolean alertPayload = hasAny(extras, "LIMITED_SPEED", "CAMERA_INDEX", "CAMERA_DIST",
                 "CAMERA_SPEED", "CAMERA_TYPE", "SAPA_DIST", "SAPA_NAME", "TRAFFIC_LIGHT_NUM",
                 "routeRemainTrafficLightNum");
@@ -4351,45 +4570,62 @@ public class OverlayService extends Service {
         int cameraSpeed = intValue(extras, "CAMERA_SPEED", -1);
         int limitedSpeed = intValue(extras, "LIMITED_SPEED", -1);
         int displaySpeed = limitedSpeed > 0 ? limitedSpeed : cameraSpeed;
-        if (displaySpeed > 0) {
-            parts.add("\u9650\u901f " + displaySpeed);
-        }
-
-        if (cameraIndex != -1 && cameraDist >= 0) {
-            StringBuilder camera = new StringBuilder(cameraTypeName(cameraType));
-            camera.append(' ').append(formatDistance(cameraDist));
-            parts.add(camera.toString());
-        }
 
         int lightNum = intValue(extras, "routeRemainTrafficLightNum",
                 intValue(extras, "TRAFFIC_LIGHT_NUM", -1));
+        boolean updated = false;
+        if (displaySpeed > 0) {
+            cachedEdogSpeed = displaySpeed;
+            updated = true;
+        }
+        if (cameraIndex != -1 && cameraDist >= 0) {
+            cachedCameraIndex = cameraIndex;
+            cachedCameraDist = cameraDist;
+            cachedCameraType = cameraType;
+            updated = true;
+        }
         if (lightNum > 0) {
-            parts.add("\u7ea2\u7eff\u706f " + lightNum + "\u4e2a");
+            cachedLightNum = lightNum;
+            updated = true;
+        }
+        if (updated) {
+            cachedEdogUpdatedAt = System.currentTimeMillis();
+        } else if (alertPayload) {
+            mainHandler.removeCallbacks(alertClear);
+            mainHandler.postDelayed(alertClear, ALERT_TTL_MS + 200L);
         }
 
-        if (parts.isEmpty()) {
-            if (alertPayload) {
-                currentLimitSpeed = -1;
-                // Some AMap builds emit sparse edog broadcasts between full payloads.
-                // Keep the previous compact widgets until the normal TTL clears them
-                // instead of flickering visible/gone on every sparse packet.
-                mainHandler.removeCallbacks(alertClear);
-                mainHandler.postDelayed(alertClear, ALERT_TTL_MS + 200L);
-            }
+        if (!hasFreshEdogAlert()) {
             return;
         }
-        currentLimitSpeed = displaySpeed;
+
+        ArrayList<String> parts = new ArrayList<>();
+        if (cachedEdogSpeed > 0) {
+            parts.add("\u9650\u901f " + cachedEdogSpeed);
+        }
+        if (cachedCameraIndex != -1 && cachedCameraDist >= 0) {
+            StringBuilder camera = new StringBuilder(cameraTypeName(cachedCameraType));
+            camera.append(' ').append(formatDistance(cachedCameraDist));
+            parts.add(camera.toString());
+        }
+        if (cachedLightNum > 0) {
+            parts.add("\u7ea2\u7eff\u706f " + cachedLightNum + "\u4e2a");
+        }
+        currentLimitSpeed = cachedEdogSpeed;
         if (alertText != null) {
             alertText.setText(join(parts, "  \u00b7  "));
         }
         if (clusterAlertText != null && alertText != null) {
             clusterAlertText.setText(alertText.getText());
         }
-        populateEdogAlertRow(alertRow, displaySpeed, cameraIndex, cameraDist, cameraType, lightNum);
-        populateEdogAlertRow(clusterAlertRow, displaySpeed, cameraIndex, cameraDist, cameraType, lightNum);
-        populateCompactWidgetRow(displaySpeed, cameraIndex, cameraDist, cameraType, lightNum);
+        populateEdogAlertRow(alertRow, cachedEdogSpeed, cachedCameraIndex,
+                cachedCameraDist, cachedCameraType, cachedLightNum);
+        populateEdogAlertRow(clusterAlertRow, cachedEdogSpeed, cachedCameraIndex,
+                cachedCameraDist, cachedCameraType, cachedLightNum);
+        populateCompactWidgetRow(cachedEdogSpeed, cachedCameraIndex,
+                cachedCameraDist, cachedCameraType, cachedLightNum);
         refreshAlertCard();
-        alertUpdatedAt = System.currentTimeMillis();
+        alertUpdatedAt = cachedEdogUpdatedAt;
         mainHandler.removeCallbacks(alertClear);
         mainHandler.postDelayed(alertClear, ALERT_TTL_MS + 200L);
         syncAlertVisibility();
@@ -4400,6 +4636,7 @@ public class OverlayService extends Service {
 
     private void clearAlertDetails() {
         currentLimitSpeed = -1;
+        clearEdogCache();
         if (alertText != null) {
             alertText.setVisibility(View.GONE);
             alertText.setText("");
@@ -4410,10 +4647,33 @@ public class OverlayService extends Service {
         }
         clearEdogAlertRow(alertRow);
         clearEdogAlertRow(clusterAlertRow);
+        clearEdogAlertRow(cardCruiseEdogRow);
+        clearEdogAlertRow(cardNavEdogRow);
+        clearEdogAlertRow(clusterCardCruiseEdogRow);
+        clearEdogAlertRow(clusterCardNavEdogRow);
         clearCompactWidgetRow();
         refreshAlertCard();
         syncAlertVisibility();
         mainHandler.removeCallbacks(alertClear);
+    }
+
+    private boolean hasFreshEdogAlert() {
+        if (cachedEdogUpdatedAt <= 0
+                || System.currentTimeMillis() - cachedEdogUpdatedAt > ALERT_TTL_MS + 200L) {
+            return false;
+        }
+        return cachedEdogSpeed > 0
+                || (cachedCameraIndex != -1 && cachedCameraDist >= 0)
+                || cachedLightNum > 0;
+    }
+
+    private void clearEdogCache() {
+        cachedEdogSpeed = -1;
+        cachedCameraIndex = -1;
+        cachedCameraDist = -1;
+        cachedCameraType = -1;
+        cachedLightNum = -1;
+        cachedEdogUpdatedAt = 0L;
     }
 
     private void populateEdogAlertRow(LinearLayout row, int speed, int cameraIndex,
@@ -4428,7 +4688,9 @@ public class OverlayService extends Service {
             if (speed > 0) {
                 speedBox.setVisibility(View.VISIBLE);
                 if (frame.getChildCount() > 1 && frame.getChildAt(1) instanceof TextView) {
-                    ((TextView) frame.getChildAt(1)).setText(String.valueOf(speed));
+                    String txt = String.valueOf(speed);
+                    TextView tv = (TextView) frame.getChildAt(1);
+                    tv.setText(txt);
                 }
                 anyVisible = true;
             } else {
@@ -4454,8 +4716,13 @@ public class OverlayService extends Service {
                     }
                     if (frame.getChildCount() > 1 && frame.getChildAt(1) instanceof TextView) {
                         TextView limit = (TextView) frame.getChildAt(1);
-                        limit.setText(speedCamera ? String.valueOf(speed) : "");
-                        limit.setVisibility(speedCamera ? View.VISIBLE : View.GONE);
+                        if (speedCamera && speed > 0) {
+                            limit.setText(String.valueOf(speed));
+                            limit.setVisibility(View.VISIBLE);
+                        } else {
+                            limit.setText("");
+                            limit.setVisibility(View.GONE);
+                        }
                     }
                 } else if (box.getChildCount() > 0 && box.getChildAt(0) instanceof ImageView) {
                     // Old-style direct ImageView (backward compat)
@@ -4501,6 +4768,16 @@ public class OverlayService extends Service {
 
     private void updateStatusDetails(Bundle extras) {
         boolean hasCompactHeadingTarget = compactCruiseDirText != null || clusterCompactCruiseDirText != null;
+        boolean showStatusDetails = shouldShowStandbyStatusDetails();
+        int roadType = intValue(extras, "ROAD_TYPE", -1);
+        if (roadType >= 0) {
+            currentRoadType = roadType;
+        }
+        if (showStatusDetails && roadType >= 0) {
+            currentRoadTypeSummary = roadTypeName(roadType);
+        } else if (!showStatusDetails || roadType >= 0) {
+            currentRoadTypeSummary = "";
+        }
         if (detailText == null && !hasCompactHeadingTarget) {
             return;
         }
@@ -4524,13 +4801,6 @@ public class OverlayService extends Service {
                 doubleValue(extras, "LAT", doubleValue(extras, "LATITUDE", Double.NaN)));
         double lon = doubleValue(extras, "CAR_LONGITUDE",
                 doubleValue(extras, "LON", doubleValue(extras, "LONGITUDE", Double.NaN)));
-        boolean showStatusDetails = shouldShowStandbyStatusDetails();
-        int roadType = intValue(extras, "ROAD_TYPE", -1);
-        if (showStatusDetails && roadType >= 0) {
-            currentRoadTypeSummary = roadTypeName(roadType);
-        } else {
-            currentRoadTypeSummary = "";
-        }
         if (showStatusDetails && (direction >= 0 || (!Double.isNaN(lat) && !Double.isNaN(lon) && !(lat == 0.0d && lon == 0.0d)))) {
             StringBuilder car = new StringBuilder();
             if (direction >= 0) {
@@ -4553,7 +4823,7 @@ public class OverlayService extends Service {
         if (direction >= 0) {
             currentHeadingSummary = bearingToCompass(direction);
         }
-        if (AppPrefs.isDynamicIslandUiEnabled(this)) {
+        if (isAnyDynamicIslandUiEnabled()) {
             updateDynamicIslandCruiseDirectionText(compactCruiseDirText);
             updateDynamicIslandCruiseDirectionText(clusterCompactCruiseDirText);
         } else {
@@ -4692,6 +4962,34 @@ public class OverlayService extends Service {
         }
     }
 
+    private void updateTmcData(String tmcJson) {
+        if (TextUtils.isEmpty(tmcJson)) {
+            return;
+        }
+        cachedTmcJson = tmcJson;
+        tmcUpdatedAt = System.currentTimeMillis();
+        if (mainTmcProgressBar != null) {
+            mainTmcProgressBar.updateTmcData(tmcJson);
+        }
+        if (clusterTmcProgressBar != null) {
+            clusterTmcProgressBar.updateTmcData(tmcJson);
+        }
+        mainHandler.removeCallbacks(tmcClear);
+        mainHandler.postDelayed(tmcClear, TMC_TTL_MS + 500L);
+    }
+
+    private void clearTmcData() {
+        cachedTmcJson = "";
+        tmcUpdatedAt = 0L;
+        if (mainTmcProgressBar != null) {
+            mainTmcProgressBar.clear();
+        }
+        if (clusterTmcProgressBar != null) {
+            clusterTmcProgressBar.clear();
+        }
+        mainHandler.removeCallbacks(tmcClear);
+    }
+
     private void requestLaneInfo() {
         try {
             Intent intent = new Intent(ACTION_RECV);
@@ -4713,6 +5011,31 @@ public class OverlayService extends Service {
             Log.d(TAG, "request traffic light info KEY_TYPE=" + AmapConstants.KEY_TYPE_TRAFFIC_LIGHT);
         } catch (Throwable t) {
             Log.e(TAG, "request traffic light info failed", t);
+        }
+    }
+
+    private void requestTmcInfo() {
+        try {
+            Intent intent = new Intent(ACTION_RECV);
+            intent.setPackage(AppPrefs.getTargetPackage(this));
+            intent.putExtra("KEY_TYPE", 13011);
+            sendBroadcast(intent);
+            Log.d(TAG, "request tmc info KEY_TYPE=13011");
+        } catch (Throwable t) {
+            Log.e(TAG, "request tmc info failed", t);
+        }
+    }
+
+    private void requestExitInfo() {
+        try {
+            Intent intent = new Intent(ACTION_RECV);
+            intent.setPackage(AppPrefs.getTargetPackage(this));
+            intent.putExtra("KEY_TYPE", 12011);
+            intent.putExtra("EXIT_INFO_TYPE", 1);
+            sendBroadcast(intent);
+            Log.d(TAG, "request exit info KEY_TYPE=12011");
+        } catch (Throwable t) {
+            Log.e(TAG, "request exit info failed", t);
         }
     }
 
@@ -4989,14 +5312,7 @@ public class OverlayService extends Service {
                 int normalPadTop = scaledDp(4, overlayScale);
                 int normalPadBottom = scaledDp(2, overlayScale);
                 panel.setPadding(normalPadH, normalPadTop, normalPadH, normalPadBottom);
-                panel.setMinimumWidth(0);
                 if (isCruise) {
-                    if (mainPanelWidthUnlock != null) {
-                        mainHandler.removeCallbacks(mainPanelWidthUnlock);
-                        mainPanelWidthUnlock = null;
-                    }
-                    mainPanelBaseMinWidth = -1;
-                    mainPanelHeldMinWidth = 0;
                     // Height: full=76dp (4+32+3+35+2), single-row=38dp (4+32+2)
                     boolean row2HasContent = (cardCruiseLaneBar != null && cardCruiseLaneBar.getVisibility() == View.VISIBLE)
                             || (cardCruiseLightRow != null && cardCruiseLightRow.getChildCount() > 0);
@@ -5006,16 +5322,11 @@ public class OverlayService extends Service {
                     int minH = row2HasContent ? scaledDp(76, overlayScale) : scaledDp(38, overlayScale);
                     panel.setMinimumHeight(minH);
                     panel.setVisibility(View.VISIBLE);
-                    panel.setMinimumWidth(0);
                     panel.requestLayout();
                     updateMainPanelLayoutIfAttached();
                 } else {
                     // Nav mode: fixed 76dp height matching cruise
-                    resetMainPanelWidthStabilizer();
-                    mainPanelBaseMinWidth = -1;
-                    mainPanelHeldMinWidth = 0;
                     panel.setMinimumHeight(scaledDp(76, overlayScale));
-                    panel.setMinimumWidth(0);
                     panel.setVisibility(View.VISIBLE);
                     panel.requestLayout();
                     updateMainPanelLayoutIfAttached();
@@ -5063,7 +5374,6 @@ public class OverlayService extends Service {
                 clusterPanel.requestLayout();
                 updateClusterPanelLayoutIfAttached();
             } else {
-                clusterPanel.setMinimumWidth(0);
                 int normalPadH = scaledDp(5, clusterScale > 0 ? clusterScale : overlayScale);
                 int normalPadTop = scaledDp(4, clusterScale > 0 ? clusterScale : overlayScale);
                 int normalPadBottom = scaledDp(2, clusterScale > 0 ? clusterScale : overlayScale);
@@ -5076,13 +5386,11 @@ public class OverlayService extends Service {
                         clusterCardCruiseRow2.setVisibility(cRow2HasContent ? View.VISIBLE : View.GONE);
                     }
                     clusterPanel.setMinimumHeight(0);
-                    clusterPanel.setMinimumWidth(0);
                     clusterPanel.requestLayout();
                     updateClusterPanelLayoutIfAttached();
                 } else {
                     float cs = clusterScale > 0 ? clusterScale : overlayScale;
                     clusterPanel.setMinimumHeight(0);
-                    clusterPanel.setMinimumWidth(0);
                     clusterPanel.requestLayout();
                     updateClusterPanelLayoutIfAttached();
                 }
@@ -5234,6 +5542,642 @@ public class OverlayService extends Service {
         }
     }
 
+    // -- Turn blink (green arrow icon, distance-based) -----------
+    private void startTurnBlink() {
+        stopTurnBlink();
+        if (exitAlternatorActive) return; // exit alternation takes priority
+        if (currentTurnIcon <= 0 || currentTurnDistanceMeters <= 0 || currentTurnDistanceMeters > 500) {
+            turnBlinkOn = true;
+            applyTurnBlinkAlpha(1f);
+            return;
+        }
+        long intervalMs = 500L;
+        turnBlink = new Runnable() {
+            @Override public void run() {
+                turnBlinkOn = !turnBlinkOn;
+                applyTurnBlinkAlpha(turnBlinkOn ? 1f : 0.15f);
+                mainHandler.postDelayed(this, intervalMs);
+            }
+        };
+        turnBlinkOn = true;
+        applyTurnBlinkAlpha(1f);
+        mainHandler.postDelayed(turnBlink, intervalMs);
+    }
+
+    private void stopTurnBlink() {
+        if (turnBlink != null) { mainHandler.removeCallbacks(turnBlink); turnBlink = null; }
+        turnBlinkOn = true;
+        applyTurnBlinkAlpha(1f);
+    }
+
+    private void applyTurnBlinkAlpha(float alpha) {
+        if (turnIconView != null) turnIconView.setAlpha(alpha);
+        if (clusterTurnIconView != null) clusterTurnIconView.setAlpha(alpha);
+        if (navTurnIconView != null) navTurnIconView.setAlpha(alpha);
+        if (clusterNavTurnIconView != null) clusterNavTurnIconView.setAlpha(alpha);
+        if (turnLeadIconView != null) turnLeadIconView.setAlpha(alpha);
+        if (clusterTurnLeadIconView != null) clusterTurnLeadIconView.setAlpha(alpha);
+    }
+
+    // -- Exit-number overlay (wraps arrow ImageView in FrameLayout + TextView) --
+    private TextView wrapArrowWithExitOverlay(ImageView arrow, float scale) {
+        if (arrow == null) return null;
+        ViewGroup parent = (ViewGroup) arrow.getParent();
+        if (parent == null) return null;
+        ViewGroup.LayoutParams originalLp = arrow.getLayoutParams();
+        int idx = parent.indexOfChild(arrow);
+        if (idx < 0) return null;
+        parent.removeView(arrow);
+
+        FrameLayout wrapper = new FrameLayout(parent.getContext());
+        wrapper.setLayoutParams(originalLp);
+        wrapper.setClipChildren(true);
+        wrapper.setClipToPadding(true);
+
+        FrameLayout.LayoutParams fillLp = new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT);
+        arrow.setLayoutParams(fillLp);
+        wrapper.addView(arrow);
+
+        TextView exitText = new TextView(parent.getContext());
+        exitText.setTextColor(EXIT_LABEL_COLOR);
+        exitText.setTypeface(Typeface.DEFAULT_BOLD);
+        exitText.setGravity(Gravity.CENTER);
+        exitText.setIncludeFontPadding(false);
+        exitText.setVisibility(View.GONE);
+        exitText.setSingleLine(true);
+        exitText.setEllipsize(null);
+        exitText.setText(exitLabel);
+        exitText.setTextSize(scaledSp(12f, scale));
+        exitText.setBackground(null);
+        exitText.setPadding(0, 0, 0, 0);
+        FrameLayout.LayoutParams textLp = new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.MATCH_PARENT, Gravity.CENTER);
+        wrapper.addView(exitText, textLp);
+        wrapper.addOnLayoutChangeListener((v, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) ->
+                fitExitTextToWrapper(exitText));
+
+        parent.addView(wrapper, idx);
+        fitExitTextToWrapper(exitText);
+        applyPairImmediate(arrow, exitText, exitAlternatorActive && exitShowNumber);
+        return exitText;
+    }
+
+    // -- Exit arrow/exit-number alternation ----------------------------------
+
+    private static final long EXIT_SHOW_ARROW_MS = 2000L;
+    private static final long EXIT_SHOW_NUMBER_MS = 2000L;
+    private static final long EXIT_CROSSFADE_MS = 350L;
+    private static final long EXIT_MARQUEE_GAP_MS = 450L;
+    private boolean exitShowNumber;
+    private int exitTransitionToken;
+
+    // -- Exit toggle cycle (same pattern as fullModeAlternator) -----------
+
+    /**
+     * Start the toggle cycle. Like fullModeAlternator, uses a Runnable that
+     * flips a boolean and re-posts itself. Arrow and exit number share the
+     * same FrameLayout position; we crossfade with View.animate().alpha().
+     */
+    private void startExitToggleCycle() {
+        if (!exitAlternatorActive) return;
+        applyAllPairsImmediate(false);
+        exitArrowTick = new Runnable() {
+            @Override public void run() {
+                if (!exitAlternatorActive) return;
+                exitShowNumber = !exitShowNumber;
+                applyArrowExitState(exitShowNumber);
+                long delay = exitShowNumber ? exitNumberDisplayDelayMs() : EXIT_SHOW_ARROW_MS;
+                mainHandler.postDelayed(this, delay);
+            }
+        };
+        mainHandler.postDelayed(exitArrowTick, EXIT_SHOW_ARROW_MS);
+    }
+
+    private void applyAllPairsImmediate(boolean showNumber) {
+        ++exitTransitionToken;
+        applyPairImmediate(turnIconView, turnExitText, showNumber);
+        applyPairImmediate(clusterTurnIconView, clusterTurnExitText, showNumber);
+        applyPairImmediate(turnLeadIconView, turnLeadExitText, showNumber);
+        applyPairImmediate(clusterTurnLeadIconView, clusterTurnLeadExitText, showNumber);
+        applyPairImmediate(navTurnIconView, navExitText, showNumber);
+        applyPairImmediate(clusterNavTurnIconView, clusterNavExitText, showNumber);
+    }
+
+    private void restoreExitAlternatorVisualState() {
+        if (!exitAlternatorActive) {
+            return;
+        }
+        applyAllPairsImmediate(exitShowNumber);
+    }
+
+    /**
+     * Crossfade to arrow (showNumber=false) or exit number (showNumber=true).
+     * Animates all 6 arrow+exit pairs simultaneously via ViewPropertyAnimator.
+     */
+    private void applyArrowExitState(boolean showNumber) {
+        int token = ++exitTransitionToken;
+        transitionPair(turnIconView, turnExitText, showNumber, token);
+        transitionPair(clusterTurnIconView, clusterTurnExitText, showNumber, token);
+        transitionPair(turnLeadIconView, turnLeadExitText, showNumber, token);
+        transitionPair(clusterTurnLeadIconView, clusterTurnLeadExitText, showNumber, token);
+        transitionPair(navTurnIconView, navExitText, showNumber, token);
+        transitionPair(clusterNavTurnIconView, clusterNavExitText, showNumber, token);
+    }
+
+    private void transitionPair(ImageView iv, TextView tv, boolean showNumber, int token) {
+        if (tv != null) {
+            tv.setText(exitLabel);
+            fitExitTextToWrapper(tv);
+        }
+        View from = showNumber ? iv : tv;
+        View to = showNumber ? tv : iv;
+        cancelPairAnimation(iv, tv);
+        hideViewForExitTransition(to);
+        if (from == null) {
+            showViewForExitTransition(to, token);
+            return;
+        }
+        from.animate().cancel();
+        from.setAlpha(0f);
+        from.setVisibility(View.INVISIBLE);
+        mainHandler.postDelayed(new Runnable() {
+            @Override public void run() {
+                if (token != exitTransitionToken || !exitAlternatorActive) {
+                    return;
+                }
+                showViewForExitTransition(to, token);
+            }
+        }, 40L);
+    }
+
+    private void showViewForExitTransition(View view, int token) {
+        if (view == null || token != exitTransitionToken || !exitAlternatorActive) {
+            return;
+        }
+        if (view instanceof TextView) {
+            prepareExitTextMarqueeStart((TextView) view);
+        }
+        view.setAlpha(0f);
+        view.setVisibility(View.VISIBLE);
+        view.animate().alpha(1f).setDuration(EXIT_CROSSFADE_MS).withEndAction(new Runnable() {
+            @Override public void run() {
+                if (token == exitTransitionToken && exitAlternatorActive && view instanceof TextView) {
+                    startExitTextMarquee((TextView) view);
+                }
+            }
+        }).start();
+    }
+
+    private void hideViewForExitTransition(View view) {
+        if (view == null) {
+            return;
+        }
+        view.animate().cancel();
+        view.setTranslationX(0f);
+        view.setAlpha(0f);
+        view.setVisibility(View.INVISIBLE);
+    }
+
+    private void cancelPairAnimation(ImageView iv, TextView tv) {
+        if (iv != null) {
+            iv.animate().cancel();
+        }
+        if (tv != null) {
+            tv.animate().cancel();
+        }
+    }
+
+    private int[] measurePanelContent(LinearLayout target) {
+        int width = target.getWidth();
+        int height = target.getHeight();
+        if (width <= 0 || height <= 0) {
+            int wSpec = View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED);
+            int hSpec = View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED);
+            target.measure(wSpec, hSpec);
+            width = target.getMeasuredWidth();
+            height = target.getMeasuredHeight();
+        }
+        return new int[]{Math.max(0, width), Math.max(0, height)};
+    }
+
+    private int panelShrinkThresholdPx(boolean cluster) {
+        float scale = cluster && clusterScale > 0 ? clusterScale : overlayScale;
+        return Math.max(2, scaledDp(8, scale));
+    }
+
+    private void applyPairImmediate(ImageView iv, TextView tv, boolean showNumber) {
+        cancelPairAnimation(iv, tv);
+        if (iv != null) {
+            iv.setAlpha(showNumber ? 0f : 1f);
+            iv.setVisibility(showNumber ? View.INVISIBLE : View.VISIBLE);
+        }
+        if (tv != null) {
+            boolean wasVisible = tv.getVisibility() == View.VISIBLE && tv.getAlpha() > 0.5f;
+            tv.setText(exitLabel);
+            fitExitTextToWrapper(tv);
+            tv.animate().cancel();
+            tv.setAlpha(showNumber ? 1f : 0f);
+            tv.setVisibility(showNumber ? View.VISIBLE : View.INVISIBLE);
+            if (showNumber && !wasVisible) {
+                startExitTextMarquee(tv);
+            } else if (!showNumber) {
+                tv.setTranslationX(0f);
+            }
+        }
+    }
+
+    private void disableAncestorClipping(View view, int maxDepth) {
+        View current = view;
+        for (int i = 0; i < maxDepth && current instanceof ViewGroup; i++) {
+            ViewGroup group = (ViewGroup) current;
+            group.setClipChildren(false);
+            group.setClipToPadding(false);
+            if (!(group.getParent() instanceof View)) {
+                return;
+            }
+            current = (View) group.getParent();
+        }
+    }
+
+    private long exitNumberDisplayDelayMs() {
+        long delay = EXIT_SHOW_NUMBER_MS;
+        delay = Math.max(delay, exitTextMarqueeDurationMs(navExitText));
+        delay = Math.max(delay, exitTextMarqueeDurationMs(clusterNavExitText));
+        delay = Math.max(delay, exitTextMarqueeDurationMs(turnExitText));
+        delay = Math.max(delay, exitTextMarqueeDurationMs(clusterTurnExitText));
+        delay = Math.max(delay, exitTextMarqueeDurationMs(turnLeadExitText));
+        delay = Math.max(delay, exitTextMarqueeDurationMs(clusterTurnLeadExitText));
+        return delay + EXIT_MARQUEE_GAP_MS;
+    }
+
+    private long exitTextMarqueeDurationMs(TextView tv) {
+        if (!needsExitTextMarquee(tv)) {
+            return EXIT_SHOW_NUMBER_MS;
+        }
+        View parent = (View) tv.getParent();
+        float distance = measuredExitTextWidth(tv) + parent.getWidth();
+        return Math.max(2600L, Math.min(7000L, (long) (distance * 18f)));
+    }
+
+    private void startExitTextMarquee(TextView tv) {
+        if (!needsExitTextMarquee(tv)) {
+            tv.setTranslationX(0f);
+            return;
+        }
+        float start = exitTextMarqueeStartX(tv);
+        float end = exitTextMarqueeEndX(tv);
+        tv.animate().cancel();
+        tv.setTranslationX(start);
+        tv.animate()
+                .translationX(end)
+                .setDuration(exitTextMarqueeDurationMs(tv))
+                .start();
+    }
+
+    private void prepareExitTextMarqueeStart(TextView tv) {
+        if (needsExitTextMarquee(tv)) {
+            tv.setTranslationX(exitTextMarqueeStartX(tv));
+        } else {
+            tv.setTranslationX(0f);
+        }
+    }
+
+    private float exitTextMarqueeStartX(TextView tv) {
+        View parent = (View) tv.getParent();
+        float textWidth = measuredExitTextWidth(tv);
+        float parentWidth = parent.getWidth();
+        float centeredLeft = (parentWidth - textWidth) * 0.5f;
+        return parentWidth - centeredLeft;
+    }
+
+    private float exitTextMarqueeEndX(TextView tv) {
+        View parent = (View) tv.getParent();
+        float textWidth = measuredExitTextWidth(tv);
+        float parentWidth = parent.getWidth();
+        float centeredLeft = (parentWidth - textWidth) * 0.5f;
+        return -textWidth - centeredLeft;
+    }
+
+    private boolean needsExitTextMarquee(TextView tv) {
+        if (tv == null || !(tv.getParent() instanceof View) || TextUtils.isEmpty(tv.getText())) {
+            return false;
+        }
+        View parent = (View) tv.getParent();
+        return parent.getWidth() > 0 && measuredExitTextWidth(tv) > parent.getWidth() * 0.92f;
+    }
+
+    private float measuredExitTextWidth(TextView tv) {
+        fitPaint.setTypeface(Typeface.DEFAULT_BOLD);
+        fitPaint.setAntiAlias(true);
+        fitPaint.setTextSize(tv.getTextSize());
+        return fitPaint.measureText(String.valueOf(tv.getText()));
+    }
+
+    private void fitExitTextToWrapper(TextView tv) {
+        if (tv == null || TextUtils.isEmpty(tv.getText())) {
+            return;
+        }
+        View parent = tv.getParent() instanceof View ? (View) tv.getParent() : null;
+        int width = parent != null ? parent.getWidth() : tv.getWidth();
+        int height = parent != null ? parent.getHeight() : tv.getHeight();
+        if (height <= 0 && parent != null && parent.getLayoutParams() != null) {
+            height = parent.getLayoutParams().height;
+        }
+        if (height <= 0) {
+            return;
+        }
+        String text = String.valueOf(tv.getText());
+        float maxHeight = Math.max(1f, height * 0.58f);
+        float lo = Math.max(3f, height * 0.08f);
+        float hi = Math.max(lo, maxHeight);
+        fitPaint.setTypeface(Typeface.DEFAULT_BOLD);
+        fitPaint.setAntiAlias(true);
+        float maxStillWidth = width > 0 ? width * 0.9f : Float.MAX_VALUE;
+        for (int i = 0; i < 14; i++) {
+            float mid = (lo + hi) * 0.5f;
+            fitPaint.setTextSize(mid);
+            Paint.FontMetrics fm = fitPaint.getFontMetrics();
+            float textHeight = fm.descent - fm.ascent;
+            float textWidth = fitPaint.measureText(text);
+            if (textHeight <= maxHeight && (textWidth <= maxStillWidth || mid <= height * 0.34f)) {
+                lo = mid;
+            } else {
+                hi = mid;
+            }
+        }
+        tv.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, lo);
+        tv.measure(View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
+                View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.EXACTLY));
+    }
+
+    private void ensureExitAlternator() {
+        // 0=高速 1=国道 2=省道 6=城市快速路 — all may have numbered exits
+        boolean onHighwayOrExpressway = currentRoadType == 0 || currentRoadType == 1
+                || currentRoadType == 2 || currentRoadType == 6 || currentRoadType == 7;
+        boolean shouldAlt = exitResultState == 1 && !TextUtils.isEmpty(exitLabel)
+                && !inCruiseMode && currentTurnIcon > 0
+                && (onHighwayOrExpressway || routeGuidanceExitSupported);
+        if (shouldAlt) {
+            // Cancel any pending deferred stop
+            if (exitStopPending != null) {
+                mainHandler.removeCallbacks(exitStopPending);
+                exitStopPending = null;
+            }
+            if (!exitAlternatorActive) {
+                exitAlternatorActive = true;
+                stopTurnBlink();
+                exitShowNumber = false;
+                startExitToggleCycle();
+            }
+        } else {
+            // Deferred stop: wait 5s before stopping to avoid flapping
+            if (exitStopPending == null && exitAlternatorActive) {
+                exitStopPending = new Runnable() {
+                    @Override public void run() {
+                        stopExitAlternator();
+                        exitStopPending = null;
+                    }
+                };
+                mainHandler.postDelayed(exitStopPending, 5000L);
+            }
+        }
+    }
+
+    private void stopExitAlternator() {
+        exitAlternatorActive = false;
+        ++exitTransitionToken;
+        if (exitArrowTick != null) {
+            mainHandler.removeCallbacks(exitArrowTick);
+            exitArrowTick = null;
+        }
+        if (exitStopPending != null) {
+            mainHandler.removeCallbacks(exitStopPending);
+            exitStopPending = null;
+        }
+        // Cancel animations, restore arrows, hide exit texts
+        restoreAllPairs();
+    }
+
+    private void restoreAllPairs() {
+        restorePair(turnIconView, turnExitText);
+        restorePair(clusterTurnIconView, clusterTurnExitText);
+        restorePair(turnLeadIconView, turnLeadExitText);
+        restorePair(clusterTurnLeadIconView, clusterTurnLeadExitText);
+        restorePair(navTurnIconView, navExitText);
+        restorePair(clusterNavTurnIconView, clusterNavExitText);
+    }
+
+    private void restorePair(ImageView iv, TextView tv) {
+        if (iv != null) { iv.animate().cancel(); iv.setAlpha(1f); }
+        if (tv != null) { tv.animate().cancel(); tv.setAlpha(0f); tv.setVisibility(View.GONE); }
+    }
+
+    // -- 10001 / 12011 exit info handlers ------------------------------------
+
+    private void updateRouteGuidanceExitInfo(Bundle extras) {
+        if (intValue(extras, "KEY_TYPE", -1) != AmapConstants.KEY_TYPE_ROUTE_GUIDANCE) {
+            return;
+        }
+        boolean hasExitPayload = hasAny(extras,
+                "EXIT_NAME_INFO", "exit_name_info", "exitNameInfo", "exitName",
+                "EXIT_DIRECTION_INFO", "exit_direction_info", "exitDirectionInfo", "exitDirection");
+        if (!hasExitPayload) {
+            return;
+        }
+        String nameInfo = valueString(extras,
+                "EXIT_NAME_INFO", "exit_name_info", "exitNameInfo", "exitName");
+        String directionInfo = valueString(extras,
+                "EXIT_DIRECTION_INFO", "exit_direction_info", "exitDirectionInfo", "exitDirection");
+        routeGuidanceExitSupported = true;
+        exitDirection = cleanExitInfoText(directionInfo);
+        routeGuidanceExitLabel = buildRouteGuidanceExitLabel(nameInfo, exitDirection);
+        exitLabel = routeGuidanceExitLabel;
+        exitNameNum = parsePositiveInt(exitLabel, -1);
+        exitResultState = TextUtils.isEmpty(exitLabel) ? -1 : 1;
+        updateExitTextViews(exitLabel);
+        ensureExitAlternator();
+    }
+
+    private void handleExitInfo(Bundle extras) {
+        int fallbackNameNum = intValue(extras, "EXIT_INFO_EXIT_NAME_NUM", -1);
+        String fallbackDirection = cleanExitInfoText(valueString(extras, "EXIT_INFO_DIRECTION", ""));
+        String fallbackLabel = buildExitLabelFrom12011(fallbackNameNum, fallbackDirection);
+        if (!TextUtils.isEmpty(routeGuidanceExitLabel) && !TextUtils.isEmpty(fallbackLabel)
+                && !TextUtils.equals(routeGuidanceExitLabel, fallbackLabel)) {
+            Log.d(TAG, "exit info mismatch 10001=" + routeGuidanceExitLabel + " 12011=" + fallbackLabel);
+        }
+        if (routeGuidanceExitSupported) {
+            ensureExitAlternator();
+            return;
+        }
+
+        exitNameNum = fallbackNameNum;
+        exitDirection = fallbackDirection;
+        exitDistance = intValue(extras, "EXIT_INFO_DISTANCE", -1);
+        exitTime = intValue(extras, "EXIT_INFO_TIME", -1);
+        exitResultState = intValue(extras, "EXIT_INFO_RESULT_STATE", -1);
+        exitLabel = fallbackLabel;
+        if (TextUtils.isEmpty(exitLabel)) {
+            exitResultState = -1;
+        }
+        updateExitTextViews(exitLabel);
+        ensureExitAlternator();
+    }
+
+    private String buildExitLabelFrom12011(int nameNum, String direction) {
+        // Try to extract the real exit number from the direction string first.
+        // Amap format: "<num><name>,<num><name>,..." e.g. "2影视城,2码头国际健康城"
+        if (!TextUtils.isEmpty(direction)) {
+            String num = parseFirstExitNumber(direction);
+            if (!TextUtils.isEmpty(num)) return num;
+        }
+        if (nameNum > 0) return String.valueOf(nameNum);
+        return "";
+    }
+
+    private String buildRouteGuidanceExitLabel(String nameInfo, String directionInfo) {
+        String name = compactExitInfoText(nameInfo);
+        if (!TextUtils.isEmpty(name)) {
+            return name;
+        }
+        String direction = compactExitInfoText(directionInfo);
+        if (TextUtils.isEmpty(direction)) {
+            return "";
+        }
+        String num = parseFirstExitNumber(direction);
+        return TextUtils.isEmpty(num) ? direction : num;
+    }
+
+    private String cleanExitInfoText(String text) {
+        if (TextUtils.isEmpty(text)) {
+            return "";
+        }
+        String s = text.replace('\r', ' ').replace('\n', ' ').trim();
+        if (TextUtils.isEmpty(s) || "0".equals(s) || "null".equalsIgnoreCase(s)) {
+            return "";
+        }
+        try {
+            if (s.startsWith("{")) {
+                JSONObject object = new JSONObject(s);
+                String nested = valueFromExitJson(object,
+                        "EXIT_NAME_INFO", "exit_name_info", "exitNameInfo", "exitName",
+                        "name", "text", "value");
+                if (!TextUtils.isEmpty(nested)) {
+                    return cleanExitInfoText(nested);
+                }
+            } else if (s.startsWith("[")) {
+                JSONArray array = new JSONArray(s);
+                for (int i = 0; i < array.length(); i++) {
+                    Object item = array.opt(i);
+                    String nested = item instanceof JSONObject
+                            ? valueFromExitJson((JSONObject) item, "name", "text", "value", "exitName", "exit_name_info")
+                            : String.valueOf(item);
+                    nested = cleanExitInfoText(nested);
+                    if (!TextUtils.isEmpty(nested)) {
+                        return nested;
+                    }
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        return s.replaceAll("\\s+", " ");
+    }
+
+    private String valueFromExitJson(JSONObject object, String... keys) {
+        if (object == null) {
+            return "";
+        }
+        for (String key : keys) {
+            String value = object.optString(key, "");
+            if (!TextUtils.isEmpty(value) && !"0".equals(value) && !"null".equalsIgnoreCase(value)) {
+                return value;
+            }
+        }
+        return "";
+    }
+
+    private String compactExitInfoText(String text) {
+        String cleaned = cleanExitInfoText(text);
+        if (TextUtils.isEmpty(cleaned)) {
+            return "";
+        }
+        String[] parts = cleaned.split("[,\\uFF0C\\u3001;\\uFF1B]+");
+        for (String part : parts) {
+            String candidate = part.trim();
+            if (TextUtils.isEmpty(candidate)) {
+                continue;
+            }
+            candidate = candidate.replace("\u51fa\u53e3\u7f16\u53f7", "")
+                    .replace("\u5165\u53e3\u7f16\u53f7", "")
+                    .replace("\u51fa\u53e3", "")
+                    .replace("\u5165\u53e3", "")
+                    .trim();
+            if (!TextUtils.isEmpty(candidate)) {
+                return candidate;
+            }
+        }
+        return cleaned;
+    }
+
+    private int parsePositiveInt(String value, int fallback) {
+        if (TextUtils.isEmpty(value)) {
+            return fallback;
+        }
+        try {
+            int parsed = Integer.parseInt(value.trim());
+            return parsed > 0 ? parsed : fallback;
+        } catch (Throwable ignored) {
+            return fallback;
+        }
+    }
+
+    /** Parse the leading digits from the first segment of the direction string. */
+    private String parseFirstExitNumber(String dir) {
+        if (TextUtils.isEmpty(dir)) return "";
+        String first = dir.split("[,\\uFF0C\\u3001;\\uFF1B]+")[0].trim();
+        Matcher leading = Pattern.compile("^\\D*?([0-9]{1,4}[A-Za-z]?)").matcher(first);
+        if (leading.find()) {
+            return leading.group(1);
+        }
+        Matcher any = Pattern.compile("([0-9]{1,4}[A-Za-z]?)").matcher(first);
+        if (any.find()) {
+            return any.group(1);
+        }
+        return "";
+    }
+
+    private void updateExitTextViews(String label) {
+        setExitText(navExitText, label);
+        setExitText(clusterNavExitText, label);
+        setExitText(turnExitText, label);
+        setExitText(clusterTurnExitText, label);
+        setExitText(turnLeadExitText, label);
+        setExitText(clusterTurnLeadExitText, label);
+        restoreExitAlternatorVisualState();
+    }
+
+    private void setExitText(TextView view, String label) {
+        if (view == null) {
+            return;
+        }
+        view.setText(label);
+        fitExitTextToWrapper(view);
+    }
+
+    private void clearExitInfoState() {
+        exitNameNum = -1;
+        exitDirection = "";
+        exitLabel = "";
+        routeGuidanceExitSupported = false;
+        routeGuidanceExitLabel = "";
+        exitDistance = -1;
+        exitTime = -1;
+        exitResultState = -1;
+        updateExitTextViews("");
+        stopExitAlternator();
+    }
+
     private void restoreNormalBorder() {
         int opacity = AppPrefs.getBackgroundOpacityPercent(this);
         if (panelBackground != null) {
@@ -5267,6 +6211,7 @@ public class OverlayService extends Service {
         }
 
         // Only set visibility when state changes to avoid flickering
+        // Respect exit info alternation state
         if (navTurnBox != null) {
             int targetVis = isNav ? View.VISIBLE : View.GONE;
             if (navTurnBox.getVisibility() != targetVis) {
@@ -5282,6 +6227,9 @@ public class OverlayService extends Service {
             if (clusterNavTurnBox.getVisibility() != targetVis) {
                 clusterNavTurnBox.setVisibility(targetVis);
             }
+        }
+        if (isNav) {
+            updateFullModeAlternatingDisplay();
         }
         // Cruise: only set parent visibility on mode change, update text always
         if (compactCruiseRoadText != null) {
@@ -5416,16 +6364,27 @@ public class OverlayService extends Service {
             return;
         }
 
-        // Simple toggle: respect fullModeShowEta state directly
-        fullModeTurnInfoCol.setVisibility(fullModeShowEta ? View.GONE : View.VISIBLE);
-        fullModeEtaInfoCol.setVisibility(fullModeShowEta ? View.VISIBLE : View.GONE);
+        boolean showEta = fullModeShowEta && hasFullModeEtaContent();
+        fullModeTurnInfoCol.setVisibility(showEta ? View.GONE : View.VISIBLE);
+        fullModeEtaInfoCol.setVisibility(showEta ? View.VISIBLE : View.GONE);
 
         // Update cluster too
         if (fullModeClusterTurnInfoCol != null && fullModeClusterEtaInfoCol != null
                 && clusterNavTurnBox != null && clusterNavTurnBox.getVisibility() == View.VISIBLE) {
-            fullModeClusterTurnInfoCol.setVisibility(fullModeShowEta ? View.GONE : View.VISIBLE);
-            fullModeClusterEtaInfoCol.setVisibility(fullModeShowEta ? View.VISIBLE : View.GONE);
+            fullModeClusterTurnInfoCol.setVisibility(showEta ? View.GONE : View.VISIBLE);
+            fullModeClusterEtaInfoCol.setVisibility(showEta ? View.VISIBLE : View.GONE);
         }
+    }
+
+    private boolean hasFullModeEtaContent() {
+        return hasText(fullModeEtaRemainDist)
+                || hasText(fullModeEtaArriveTime)
+                || hasText(fullModeClusterEtaRemainDist)
+                || hasText(fullModeClusterEtaArriveTime);
+    }
+
+    private boolean hasText(TextView view) {
+        return view != null && !TextUtils.isEmpty(view.getText());
     }
 
     private void updateFullModeEtaInfo(String remainDistText, int remainSeconds) {
@@ -5440,12 +6399,13 @@ public class OverlayService extends Service {
             String dist = remainDistText.replace("\u5343\u7c73", "km")
                     .replace("\u516c\u91cc", "km")
                     .replace("\u7c73", "m");
-            String text = "\u4f59" + dist;
+            SpannableString sp = new SpannableString("\u4f59 " + dist);
+            sp.setSpan(new RelativeSizeSpan(0.65f), 0, 1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
             if (fullModeEtaRemainDist != null) {
-                fullModeEtaRemainDist.setText(text);
+                fullModeEtaRemainDist.setText(sp);
             }
             if (fullModeClusterEtaRemainDist != null) {
-                fullModeClusterEtaRemainDist.setText(text);
+                fullModeClusterEtaRemainDist.setText(sp);
             }
         }
         if (hasTime) {
@@ -5463,10 +6423,11 @@ public class OverlayService extends Service {
             }
         }
         // Ensure alternator is running when ETA data arrives during navigation
-        if (hasDist && !inCruiseMode && currentTurnIcon > 0
+        if ((hasDist || hasTime) && !inCruiseMode && currentTurnIcon > 0
                 && navTurnBox != null && navTurnBox.getVisibility() == View.VISIBLE) {
             ensureFullModeAlternator();
         }
+        updateFullModeAlternatingDisplay();
     }
 
     private void populateCompactWidgetRow(int speed, int cameraIndex,
@@ -5556,7 +6517,7 @@ public class OverlayService extends Service {
         if (row == null || row.getChildCount() > 0) {
             return;
         }
-        int iconSize = scaledDp(20, scale);
+        int iconSize = scaledDp(24, scale);
 
         FrameLayout speedBox = new FrameLayout(context);
         speedBox.setTag("speed_box");
@@ -5566,9 +6527,10 @@ public class OverlayService extends Service {
         speedBox.addView(speedIcon, new FrameLayout.LayoutParams(iconSize, iconSize));
         TextView speedText = new TextView(context);
         speedText.setTextColor(0xFFDC2626);
-        speedText.setTextSize(scaledSp(9f, scale));
+        speedText.setTextSize(scaledSp(11f, scale));
         speedText.setTypeface(Typeface.DEFAULT_BOLD);
         speedText.setGravity(Gravity.CENTER);
+        speedText.setIncludeFontPadding(false);
         speedBox.addView(speedText, new FrameLayout.LayoutParams(iconSize, iconSize));
         speedBox.setVisibility(View.GONE);
         LinearLayout.LayoutParams slp = new LinearLayout.LayoutParams(-2, -2);
@@ -5588,9 +6550,10 @@ public class OverlayService extends Service {
         cameraIconFrame.addView(cameraIcon, new FrameLayout.LayoutParams(iconSize, iconSize));
         TextView cameraSpeed = new TextView(context);
         cameraSpeed.setTextColor(0xFFDC2626);
-        cameraSpeed.setTextSize(scaledSp(8f, scale));
+        cameraSpeed.setTextSize(scaledSp(11f, scale));
         cameraSpeed.setTypeface(Typeface.DEFAULT_BOLD);
         cameraSpeed.setGravity(Gravity.CENTER);
+        cameraSpeed.setIncludeFontPadding(false);
         cameraSpeed.setVisibility(View.GONE);
         cameraIconFrame.addView(cameraSpeed, new FrameLayout.LayoutParams(iconSize, iconSize));
         cameraBox.addView(cameraIconFrame, new LinearLayout.LayoutParams(iconSize, iconSize));
@@ -5644,9 +6607,9 @@ public class OverlayService extends Service {
     private String formatDistance(int meters) {
         if (meters >= 1000) {
             float km = meters / 1000f;
-            return String.format(java.util.Locale.US, "%.1f\u516c\u91cc", km);
+            return String.format(java.util.Locale.US, "%.1fkm", km);
         }
-        return meters + "\u7c73";
+        return meters + "m";
     }
 
     private String formatDistanceCompact(int meters) {
@@ -5658,6 +6621,19 @@ public class OverlayService extends Service {
             return String.format(java.util.Locale.US, "%.1fkm", km);
         }
         return meters + "m";
+    }
+
+    /** Parse meters from a formatted distance string like "1.2公里" or "500米". */
+    private int parseDistanceMeters(String s) {
+        if (TextUtils.isEmpty(s)) return -1;
+        try {
+            boolean isKm = s.contains("km") || s.contains("公里");
+            String num = s.replace("km", "").replace("m", "").replace("公里", "").replace("米", "").trim();
+            float val = Float.parseFloat(num);
+            return Math.round(isKm ? val * 1000f : val);
+        } catch (Throwable ignored) {
+            return -1;
+        }
     }
 
     private String formatDuration(int seconds) {

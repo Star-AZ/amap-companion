@@ -37,10 +37,12 @@ public final class AppPrefs {
     public static final String KEY_SHOW_LIGHT                   = "show_light";
     public static final String KEY_SHOW_SERVICE_AREA            = "show_service_area";
     public static final String KEY_SHOW_ETA                     = "show_eta";
+    public static final String KEY_SHOW_DESTINATION             = "show_destination";
     public static final String KEY_SHOW_ALERT                   = "show_alert";
     public static final String KEY_SHOW_DETAIL                  = "show_detail";
     public static final String KEY_TRANSPARENT_BACKGROUND       = "transparent_background";
     public static final String KEY_BACKGROUND_OPACITY_PERCENT   = "background_opacity_percent";
+    public static final String KEY_BACKGROUND_COLOR             = "background_color";
     public static final String KEY_TEXT_MODE                    = "text_mode";
     public static final String KEY_OVERLAY_UI_STYLE             = "overlay_ui_style";
     public static final String KEY_AUTO_START_ENABLED           = "auto_start_enabled";
@@ -68,13 +70,23 @@ public final class AppPrefs {
     public static final String OVERLAY_UI_OLD                   = OverlayUiStyles.OLD;
     public static final String OVERLAY_UI_NEW                   = OverlayUiStyles.NEW;
     public static final String OVERLAY_UI_DYNAMIC_ISLAND        = OverlayUiStyles.DYNAMIC_ISLAND_FULL;
-    public static final String OVERLAY_UI_DYNAMIC_ISLAND_TEST   = OverlayUiStyles.DYNAMIC_ISLAND_TEST;
     public static final String OVERLAY_UI_CARD                  = OverlayUiStyles.CARD;
 
     // ── Scale / opacity bounds ───────────────────────────────────────────
     public static final int MIN_BACKGROUND_OPACITY_PERCENT      = 0;
-    public static final int MAX_BACKGROUND_OPACITY_PERCENT      = 90;
+    public static final int MAX_BACKGROUND_OPACITY_PERCENT      = 100;
     public static final int DEFAULT_BACKGROUND_OPACITY_PERCENT  = 90;
+    public static final int DEFAULT_BACKGROUND_COLOR            = 0xFF111827;
+    public static final int[] BACKGROUND_COLOR_PRESETS = {
+            0xFF111827,
+            0xFF1E293B,
+            0xFF0F3D3E,
+            0xFF064E3B,
+            0xFF1F3A5F,
+            0xFF7C3AED,
+            0xFFEA580C,
+            0xFFDC2626
+    };
     public static final int MIN_OVERLAY_SCALE_PERCENT           = 30;
     public static final int MAX_OVERLAY_SCALE_PERCENT           = 300;
     public static final int DEFAULT_OVERLAY_SCALE_PERCENT       = 200;
@@ -199,6 +211,19 @@ public final class AppPrefs {
         return isOverlayContentEnabled(context, KEY_SHOW_ETA);
     }
 
+    public static boolean isDestinationVisible(Context context) {
+        return isOverlayContentEnabled(context, KEY_SHOW_DESTINATION);
+    }
+
+    public static boolean isDestinationSupportedByUiStyle(Context context) {
+        String style = getOverlayUiStyle(context);
+        return OVERLAY_UI_OLD.equals(style) || OVERLAY_UI_NEW.equals(style);
+    }
+
+    public static boolean shouldShowDestination(Context context) {
+        return isDestinationVisible(context) && isDestinationSupportedByUiStyle(context);
+    }
+
     public static boolean isAlertVisible(Context context) {
         return isOverlayContentEnabled(context, KEY_SHOW_ALERT);
     }
@@ -231,10 +256,6 @@ public final class AppPrefs {
         return OVERLAY_UI_DYNAMIC_ISLAND.equals(getOverlayUiStyle(context));
     }
 
-    public static boolean isDynamicIslandTestUiEnabled(Context context) {
-        return OVERLAY_UI_DYNAMIC_ISLAND_TEST.equals(getOverlayUiStyle(context));
-    }
-
     public static boolean usesDarkTextPalette(Context context) {
         return getBackgroundOpacityPercent(context) <= 55 && isAutoTextMode(context);
     }
@@ -248,6 +269,11 @@ public final class AppPrefs {
         return prefs.getBoolean(KEY_TRANSPARENT_BACKGROUND, false)
                 ? MIN_BACKGROUND_OPACITY_PERCENT
                 : DEFAULT_BACKGROUND_OPACITY_PERCENT;
+    }
+
+    public static int getBackgroundColor(Context context) {
+        SharedPreferences prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        return normalizeBackgroundColor(prefs.getInt(KEY_BACKGROUND_COLOR, DEFAULT_BACKGROUND_COLOR));
     }
 
     public static String getOverlayTextMode(Context context) {
@@ -279,6 +305,16 @@ public final class AppPrefs {
 
     static int clampBackgroundOpacityPercent(int percent) {
         return Math.max(MIN_BACKGROUND_OPACITY_PERCENT, Math.min(MAX_BACKGROUND_OPACITY_PERCENT, percent));
+    }
+
+    static int normalizeBackgroundColor(int color) {
+        int opaque = 0xFF000000 | (color & 0x00FFFFFF);
+        for (int preset : BACKGROUND_COLOR_PRESETS) {
+            if (opaque == preset) {
+                return preset;
+            }
+        }
+        return DEFAULT_BACKGROUND_COLOR;
     }
 
     public static int strokeOpacityForBackground(int opacityPercent) {
