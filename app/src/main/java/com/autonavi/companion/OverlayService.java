@@ -5496,7 +5496,7 @@ public class OverlayService extends Service {
             if (now - overspeedPhaseStartedAt >= OVERSPEED_BLINK_MS) {
                 overspeedBlinkPhase = false;
                 overspeedPhaseStartedAt = now;
-                overspeedBlinkOn = false;
+                overspeedBlinkOn = true;
             } else {
                 overspeedBlinkOn = !overspeedBlinkOn;
             }
@@ -5506,7 +5506,7 @@ public class OverlayService extends Service {
                 overspeedPhaseStartedAt = now;
                 overspeedBlinkOn = true;
             } else {
-                overspeedBlinkOn = false;
+                overspeedBlinkOn = true;
             }
         }
         applyOverspeedBorder();

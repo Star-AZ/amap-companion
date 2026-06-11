@@ -2,6 +2,8 @@
 
 生成时间：2026-06-12 01:45（Asia/Shanghai）
 
+合并更新时间：2026-06-12 02:05（Asia/Shanghai）
+
 基础版本：`fd71eca feat: improve overlay contrast at low opacity`
 
 ## 本轮主要变更
@@ -60,6 +62,13 @@
 - 电子限速数字字体最终调整为 11sp，并保持加粗。
 - 修正电子监控图标在部分状态下闪烁、消失再出现的问题。
 
+### 超速边框提醒
+
+- 普通超速边框提醒采用“闪烁 5 秒 + 保留 20 秒”的循环方式。
+- 超速 10% 边框提醒采用“闪烁 5 秒 + 保留 10 秒”的循环方式。
+- 修正保留阶段的含义：保留时间内继续显示对应超速边框颜色，而不是恢复普通边框或隐藏颜色。
+- 退出超速、未获取限速值或对应提醒关闭时，边框恢复普通状态。
+
 ## 关键文件
 
 - `app/src/main/java/com/autonavi/companion/AppPrefs.java`
@@ -87,7 +96,7 @@ $env:ANDROID_HOME='C:\Users\hjzuo\AppData\Local\Android\Sdk'; .\build.ps1
 最近一次构建结果：
 
 - APK：`C:\Users\hjzuo\Desktop\amap-companion\amap_companion_signed.apk`
-- 生成时间：2026-06-12 01:39:50
+- 生成时间：2026-06-12 02:00:09
 - 签名校验：
   - v1：通过
   - v2：通过
