@@ -40,10 +40,13 @@ public final class AppPrefs {
     public static final String KEY_SHOW_DESTINATION             = "show_destination";
     public static final String KEY_SHOW_ALERT                   = "show_alert";
     public static final String KEY_SHOW_DETAIL                  = "show_detail";
+    public static final String KEY_SHOW_TMC_BAR                 = "show_tmc_bar";
     public static final String KEY_TRANSPARENT_BACKGROUND       = "transparent_background";
     public static final String KEY_BACKGROUND_OPACITY_PERCENT   = "background_opacity_percent";
     public static final String KEY_BACKGROUND_COLOR             = "background_color";
     public static final String KEY_TEXT_MODE                    = "text_mode";
+    public static final String KEY_CUSTOM_TEXT_COLOR_ENABLED    = "custom_text_color_enabled";
+    public static final String KEY_TEXT_COLOR                   = "text_color";
     public static final String KEY_OVERLAY_UI_STYLE             = "overlay_ui_style";
     public static final String KEY_AUTO_START_ENABLED           = "auto_start_enabled";
     public static final String KEY_START_SERVICE_ON_APP_OPEN    = "start_service_on_app_open";
@@ -77,15 +80,16 @@ public final class AppPrefs {
     public static final int MAX_BACKGROUND_OPACITY_PERCENT      = 100;
     public static final int DEFAULT_BACKGROUND_OPACITY_PERCENT  = 90;
     public static final int DEFAULT_BACKGROUND_COLOR            = 0xFF111827;
+    public static final int DEFAULT_TEXT_COLOR                  = 0xFFE8EAED;
     public static final int[] BACKGROUND_COLOR_PRESETS = {
             0xFF111827,
             0xFF1E293B,
             0xFF0F3D3E,
             0xFF064E3B,
             0xFF1F3A5F,
-            0xFF7C3AED,
-            0xFFEA580C,
-            0xFFDC2626
+            0xFF172554,
+            0xFF312E41,
+            0xFF3A3328
     };
     public static final int MIN_OVERLAY_SCALE_PERCENT           = 30;
     public static final int MAX_OVERLAY_SCALE_PERCENT           = 300;
@@ -178,13 +182,13 @@ public final class AppPrefs {
     }
 
     public static int getClusterX(Context context, int defaultValue) {
-        return Math.max(0, context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                .getInt(KEY_CLUSTER_X, defaultValue));
+        return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getInt(KEY_CLUSTER_X, defaultValue);
     }
 
     public static int getClusterY(Context context, int defaultValue) {
-        return Math.max(0, context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                .getInt(KEY_CLUSTER_Y, defaultValue));
+        return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getInt(KEY_CLUSTER_Y, defaultValue);
     }
 
     public static boolean isModeVisible(Context context) {
@@ -232,6 +236,10 @@ public final class AppPrefs {
         return isOverlayContentEnabled(context, KEY_SHOW_DETAIL);
     }
 
+    public static boolean isTmcBarVisible(Context context) {
+        return isOverlayContentEnabled(context, KEY_SHOW_TMC_BAR);
+    }
+
     public static boolean isTransparentBackground(Context context) {
         return getBackgroundOpacityPercent(context) <= MIN_BACKGROUND_OPACITY_PERCENT;
     }
@@ -258,6 +266,16 @@ public final class AppPrefs {
 
     public static boolean usesDarkTextPalette(Context context) {
         return getBackgroundOpacityPercent(context) <= 55 && isAutoTextMode(context);
+    }
+
+    public static boolean isCustomTextColorEnabled(Context context) {
+        return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getBoolean(KEY_CUSTOM_TEXT_COLOR_ENABLED, false);
+    }
+
+    public static int getTextColor(Context context) {
+        SharedPreferences prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        return normalizeBackgroundColor(prefs.getInt(KEY_TEXT_COLOR, DEFAULT_TEXT_COLOR));
     }
 
     public static int getBackgroundOpacityPercent(Context context) {
@@ -308,13 +326,7 @@ public final class AppPrefs {
     }
 
     static int normalizeBackgroundColor(int color) {
-        int opaque = 0xFF000000 | (color & 0x00FFFFFF);
-        for (int preset : BACKGROUND_COLOR_PRESETS) {
-            if (opaque == preset) {
-                return preset;
-            }
-        }
-        return DEFAULT_BACKGROUND_COLOR;
+        return 0xFF000000 | (color & 0x00FFFFFF);
     }
 
     public static int strokeOpacityForBackground(int opacityPercent) {

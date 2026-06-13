@@ -29,7 +29,7 @@ public class TmcProgressBar extends Drawable {
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Path clipPath = new Path();
     private final Bitmap carBitmap;
-    private final float density;
+    private float density;
 
     private int totalDistance;
     private int finishDistance;
@@ -39,6 +39,7 @@ public class TmcProgressBar extends Drawable {
     private boolean hasData;
     private boolean capsuleInsetMode;
     private float horizontalInsetPx = -1f;
+    private boolean drawEnabled = true;
 
     public TmcProgressBar(Context context) {
         density = context.getResources().getDisplayMetrics().density;
@@ -111,8 +112,27 @@ public class TmcProgressBar extends Drawable {
         invalidateSelf();
     }
 
+    /** Override the display density used for dp calculations (e.g. cluster display). */
+    public void setDensityOverride(float d) {
+        density = d;
+        invalidateSelf();
+    }
+
+    /** When false, draw() is a no-op but data collection continues. */
+    public void setDrawEnabled(boolean enabled) {
+        if (drawEnabled != enabled) {
+            drawEnabled = enabled;
+            invalidateSelf();
+        }
+    }
+
+    public boolean isDrawEnabled() {
+        return drawEnabled;
+    }
+
     @Override
     public void draw(Canvas canvas) {
+        if (!drawEnabled) return;
         Rect bounds = getBounds();
         int width = bounds.width();
         if (width <= 0 || !hasData) {
