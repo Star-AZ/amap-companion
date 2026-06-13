@@ -366,7 +366,20 @@ public class OverlayService extends Service {
     @Override
     public void onCreate() {
         super.onCreate();
-        startForeground(1, buildNotification());
+        try {
+            startForeground(1, buildNotification());
+        } catch (Throwable t) {
+            Log.e(TAG, "startForeground failed, retrying with minimal notification", t);
+            try {
+                // Fallback: use the simplest possible notification
+                startForeground(1, new Notification.Builder(this)
+                        .setSmallIcon(android.R.drawable.ic_dialog_info)
+                        .setContentTitle("AMap Companion")
+                        .build());
+            } catch (Throwable t2) {
+                Log.e(TAG, "startForeground fallback also failed", t2);
+            }
+        }
         registerAmapReceivers();
         stopSelfIfNoVisuals();
         if (shouldRequestAmapData()) {
@@ -499,6 +512,14 @@ public class OverlayService extends Service {
             return;
         }
 
+        try {
+            ensureOverlayInternal();
+        } catch (Throwable t) {
+            Log.e(TAG, "ensureOverlay failed", t);
+        }
+    }
+
+    private void ensureOverlayInternal() {
         overlayScale = AppPrefs.getOverlayScale(this);
         windowManager = (WindowManager) getSystemService(WINDOW_SERVICE);
         panel = buildPanelForContext(this, overlayScale, false);
@@ -596,6 +617,14 @@ public class OverlayService extends Service {
     }
 
     private void ensureClusterMirror() {
+        try {
+            ensureClusterMirrorInternal();
+        } catch (Throwable t) {
+            Log.e(TAG, "ensureClusterMirror failed", t);
+        }
+    }
+
+    private void ensureClusterMirrorInternal() {
         clusterMirrorEnabled = AppPrefs.isClusterMirrorEnabled(this);
         if (!clusterMirrorEnabled) {
             clusterMirrorRetryCount = 0;
@@ -7016,8 +7045,17 @@ public class OverlayService extends Service {
         } else {
             builder = new Notification.Builder(this);
         }
+        // Use system icon as fallback to avoid resource loading issues on some ROMs
+        int iconRes;
+        try {
+            iconRes = R.drawable.ic_stat;
+            // Verify the resource is loadable
+            getResources().getDrawable(iconRes);
+        } catch (Throwable t) {
+            iconRes = android.R.drawable.ic_dialog_info;
+        }
         return builder
-                .setSmallIcon(R.drawable.ic_stat)
+                .setSmallIcon(iconRes)
                 .setContentTitle("AMap Companion")
                 .setContentText("\u76d1\u542c\u9ad8\u5fb7\u5bfc\u822a/\u5de1\u822a\u5e7f\u64ad")
                 .setOngoing(true)
