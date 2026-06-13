@@ -359,7 +359,11 @@ public class OverlayService extends Service {
     private final BroadcastReceiver receiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
-            handleBroadcast(intent);
+            try {
+                handleBroadcast(intent);
+            } catch (Throwable t) {
+                Log.e(TAG, "handleBroadcast failed", t);
+            }
         }
     };
 
@@ -400,21 +404,25 @@ public class OverlayService extends Service {
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        if (intent != null && ACTION_STOP_SERVICE.equals(intent.getAction())) {
-            shutdownWindowsImmediately();
-            stopSelfResult(startId);
-            return START_NOT_STICKY;
-        }
-        if (!onCreateDelayed) {
-            ensureOverlay();
-            ensureClusterMirror();
-            stopSelfIfNoVisuals();
-        }
-        if (shouldRequestAmapData()) {
-            requestLaneInfo();
-            requestTrafficLightInfo();
-            requestExitInfo();
-            requestTmcInfo();
+        try {
+            if (intent != null && ACTION_STOP_SERVICE.equals(intent.getAction())) {
+                shutdownWindowsImmediately();
+                stopSelfResult(startId);
+                return START_NOT_STICKY;
+            }
+            if (!onCreateDelayed) {
+                ensureOverlay();
+                ensureClusterMirror();
+                stopSelfIfNoVisuals();
+            }
+            if (shouldRequestAmapData()) {
+                requestLaneInfo();
+                requestTrafficLightInfo();
+                requestExitInfo();
+                requestTmcInfo();
+            }
+        } catch (Throwable t) {
+            Log.e(TAG, "onStartCommand failed", t);
         }
         return START_STICKY;
     }
